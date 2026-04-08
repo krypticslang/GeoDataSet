@@ -234,6 +234,7 @@ HTML = """
       --accent:#7c3aed;
       --accent2:#22c55e;
       --border:rgba(255,255,255,.12);
+      --shadow: 0 18px 50px rgba(0,0,0,.35);
     }
     body{margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       background:
@@ -242,22 +243,33 @@ HTML = """
         var(--bg);
       color:var(--fg);
     }
-    .wrap{max-width:1120px; margin:0 auto; padding:28px 18px 64px;}
-    h1{font-size:22px; margin:0 0 6px; letter-spacing:-0.2px;}
-    .sub{color:var(--muted); margin:0 0 18px; font-size:13px; line-height:1.35;}
+    .wrap{max-width:1180px; margin:0 auto; padding:26px 18px 72px;}
+    .top{
+      display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;
+      margin-bottom:14px;
+    }
+    h1{font-size:22px; margin:0; letter-spacing:-0.2px;}
+    .sub{color:var(--muted); margin:4px 0 0; font-size:13px; line-height:1.35; max-width:820px;}
+    .links{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+    .chip{display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border-radius:999px; border:1px solid var(--border);
+      background:rgba(255,255,255,.04); color:var(--fg); font-size:12px; text-decoration:none;
+    }
+    .chip:hover{filter:brightness(1.05);}
     .grid{display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:14px; align-items:start;}
-    .card{background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:16px; overflow:hidden; backdrop-filter: blur(8px);}
+    .card{background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:16px; overflow:hidden; backdrop-filter: blur(8px); box-shadow:var(--shadow);}
     .section-title{margin:0 0 10px; font-size:12px; color:var(--muted2); letter-spacing:0.2px; text-transform:uppercase;}
     label{display:block; font-size:12px; color:var(--muted); margin:10px 0 6px;}
     input, select{width:100%; padding:11px 12px; border-radius:12px; border:1px solid var(--border);
-      background:rgba(0,0,0,.18); color:var(--fg); outline:none;
+      background:rgba(0,0,0,.18); color:var(--fg); outline:none; appearance:none;
     }
     input:focus, select:focus{border-color:rgba(124,58,237,.55); box-shadow:0 0 0 4px rgba(124,58,237,.16);}
     .row{display:grid; grid-template-columns: 1fr 1fr; gap:10px;}
-    .btn{margin-top:12px; width:100%; padding:12px; border-radius:12px; border:1px solid rgba(124,58,237,.55);
-      background:linear-gradient(180deg, rgba(124,58,237,.32), rgba(124,58,237,.20)); color:var(--fg); cursor:pointer; font-weight:650;
+    .btn{margin-top:12px; width:100%; padding:12px; border-radius:14px; border:1px solid rgba(124,58,237,.55);
+      background:linear-gradient(180deg, rgba(124,58,237,.42), rgba(124,58,237,.20)); color:var(--fg); cursor:pointer; font-weight:750;
     }
     .btn:hover{filter:brightness(1.06);}
+    .btn.secondary{border-color:rgba(255,255,255,.20); background:rgba(255,255,255,.06); font-weight:650;}
+    .btn.secondary:hover{filter:brightness(1.08);}
     .kpi{display:grid; grid-template-columns: 1fr 1fr; gap:10px;}
     .k{background:var(--panel2); border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
     .k .l{color:var(--muted2); font-size:12px;}
@@ -268,14 +280,15 @@ HTML = """
     .small{color:var(--muted); font-size:12px;}
     a{color:rgba(167,139,250,.95);}
 
-    .table-wrap{width:100%; overflow:auto; margin-top:10px; border-radius:14px; border:1px solid rgba(0,255,102,.12);}
-    table{width:100%; min-width:720px; border-collapse:collapse;}
-    thead th{font-size:12px; color:var(--muted); font-weight:700; text-align:left; padding:12px 10px;
-      border-bottom:1px solid rgba(0,255,102,.18);
-      background:rgba(255,255,255,.01);
+    .table-wrap{width:100%; overflow:auto; margin-top:10px; border-radius:14px; border:1px solid var(--border); background:rgba(0,0,0,.16);}
+    table{width:100%; min-width:720px; border-collapse:separate; border-spacing:0;}
+    thead th{position:sticky; top:0; font-size:12px; color:var(--muted); font-weight:800; text-align:left; padding:12px 10px;
+      border-bottom:1px solid var(--border);
+      background:rgba(15,18,32,.92);
+      backdrop-filter: blur(6px);
     }
-    tbody td{padding:12px 10px; border-bottom:1px solid rgba(0,255,102,.10);}
-    tbody tr:hover{background:rgba(0,255,102,.05);}
+    tbody td{padding:12px 10px; border-bottom:1px solid rgba(255,255,255,.08);}
+    tbody tr:hover{background:rgba(124,58,237,.08);}
     .mono{font-variant-numeric: tabular-nums;}
     .pill{display:inline-block; padding:3px 10px; border-radius:999px; border:1px solid var(--border);
       background:rgba(255,255,255,.05); color:var(--fg); font-size:12px;}
@@ -297,9 +310,17 @@ HTML = """
     .switch input:checked + .slider:before{transform:translateX(18px); background:rgba(34,197,94,.95);}
 
     details{border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.03); padding:10px 12px; margin-top:12px;}
-    summary{cursor:pointer; color:var(--muted); font-size:12px; font-weight:700;}
+    summary{cursor:pointer; color:var(--muted); font-size:12px; font-weight:800; list-style:none;}
+    summary::-webkit-details-marker{display:none;}
+    .divider{height:1px; background:rgba(255,255,255,.10); margin:14px 0;}
+    .preview{
+      border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.03); overflow:hidden;
+    }
+    .preview .t{padding:10px 10px 0;}
+    .preview img{display:block; width:100%; height:auto;}
+    .muted{color:var(--muted2);}
 
-    @media (max-width: 920px){
+    @media (max-width: 980px){
       .grid{grid-template-columns: 1fr;}
       table{min-width: 640px;}
     }
@@ -307,8 +328,17 @@ HTML = """
 </head>
 <body>
   <div class="wrap">
-    <h1>Image-to-Volume</h1>
-    <p class="sub">Sube una imagen con el objeto y una regla de 30 cm para extraer el perfil `r(z)`, guardarlo en `collected.csv` y estimar el volumen por integración numérica.</p>
+    <div class="top">
+      <div>
+        <h1>Image-to-Volume</h1>
+        <p class="sub">Sube una imagen con el objeto y una regla de 30 cm. El sistema detecta la regla para escalar (px → cm), segmenta el objeto, extrae `r(z)` y calcula el volumen por integración numérica.</p>
+      </div>
+      <div class="links">
+        <a class="chip" href="{{ url_for('download_collected') }}">Descargar collected.csv</a>
+        <a class="chip" href="{{ url_for('download_example', name='example_r.csv') }}">Ejemplo r(z)</a>
+        <a class="chip" href="{{ url_for('download_example', name='example_A.csv') }}">Ejemplo A(z)</a>
+      </div>
+    </div>
 
     {% if message %}
       <div class="{{ 'err' if is_error else 'ok' }}">{{ message }}</div>
@@ -375,23 +405,33 @@ HTML = """
         <form method="post" action="{{ url_for('compute_image') }}" enctype="multipart/form-data">
           <div class="section-title">Entrada</div>
           <label>Imagen (objeto + regla de 30 cm)</label>
-          <input type="file" name="image" accept="image/*" required />
+          <input id="imageInput" type="file" name="image" accept="image/*" required />
 
-          <label>Paso de muestreo (cm)</label>
-          <input name="step_cm" type="number" step="0.1" value="1.0" />
+          <div id="clientPreview" class="preview" style="margin-top:12px; display:none;">
+            <div class="small t">Previsualización</div>
+            <img id="clientPreviewImg" alt="preview" />
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <div>
+              <label>Paso de muestreo (cm)</label>
+              <input name="step_cm" type="number" step="0.1" value="1.0" />
+            </div>
+            <div>
+              <label>Método</label>
+              <select name="method">
+                <option value="trapezoidal">trapezoidal</option>
+                <option value="simpson">simpson</option>
+              </select>
+            </div>
+          </div>
 
           <details open>
-            <summary>Ajustes numéricos</summary>
-            <label style="margin-top:10px;">Método de integración</label>
-            <select name="method">
-              <option value="trapezoidal">trapezoidal</option>
-              <option value="simpson">simpson</option>
-            </select>
-
+            <summary>Ajustes</summary>
             <div class="switch-row">
               <div class="txt">
                 <div class="t">Remuestrear a malla uniforme</div>
-                <div class="d">Recomendado para Simpson si tus z no están uniformes.</div>
+                <div class="d">Útil para Simpson si z no es uniforme.</div>
               </div>
               <label class="switch" aria-label="remuestrear">
                 <input type="checkbox" name="resample" value="yes" />
@@ -399,12 +439,6 @@ HTML = """
               </label>
             </div>
 
-            <label>Paso Δz (si remuestreas)</label>
-            <input name="step" type="number" step="0.01" value="1.0" />
-          </details>
-
-          <details>
-            <summary>Opciones avanzadas</summary>
             <div class="switch-row">
               <div class="txt">
                 <div class="t">Usar Gemini como fallback</div>
@@ -428,8 +462,8 @@ HTML = """
             </div>
           </details>
 
-          <button class="btn" type="submit">Extraer perfil → Guardar → Calcular</button>
-          <div class="hint">Asegúrate que la regla de 30 cm se vea completa y esté en el mismo plano que el objeto.</div>
+          <button class="btn" type="submit">Calcular volumen</button>
+          <div class="hint">Tip: iluminación uniforme + regla completa en el mismo plano que el objeto.</div>
         </form>
 
         <details style="margin-top:14px;">
@@ -476,7 +510,7 @@ HTML = """
             <label>Paso Δz (si remuestreas)</label>
             <input name="step" type="number" step="0.01" value="1.0" />
 
-            <button class="btn" type="submit">Calcular con CSV</button>
+            <button class="btn secondary" type="submit">Calcular con CSV</button>
           </form>
         </details>
       </div>
@@ -497,7 +531,7 @@ HTML = """
             <p class="small" style="margin-top:10px;">Debug: <a href="{{ debug_zip_url }}">descargar artefactos (.zip)</a></p>
           {% endif %}
         {% else %}
-          <p class="small">Sube un CSV y calcula para ver resultados aquí.</p>
+          <p class="small">Sube una imagen y calcula para ver resultados aquí.</p>
         {% endif %}
       </div>
     </div>
@@ -570,13 +604,25 @@ HTML = """
       {% endif %}
     </div>
 
-    <p class="small" style="margin-top:16px;">
-      Archivos de ejemplo:
-      <a href="{{ url_for('download_example', name='example_A.csv') }}">example_A.csv</a>
-      · <a href="{{ url_for('download_example', name='example_r.csv') }}">example_r.csv</a>
-      · <a href="{{ url_for('download_collected') }}">collected.csv</a>
-    </p>
+    <div class="divider"></div>
+    <p class="small muted">Sugerencia práctica: si el objeto y la regla aparecen como un solo bloque en la máscara, activa “Guardar artefactos de debug” para revisar el overlay y la máscara.</p>
   </div>
+
+  <script>
+    (function(){
+      const input = document.getElementById('imageInput');
+      const wrap = document.getElementById('clientPreview');
+      const img = document.getElementById('clientPreviewImg');
+      if(!input || !wrap || !img) return;
+      input.addEventListener('change', () => {
+        const f = input.files && input.files[0];
+        if(!f){ wrap.style.display='none'; return; }
+        const url = URL.createObjectURL(f);
+        img.src = url;
+        wrap.style.display='block';
+      });
+    })();
+  </script>
 </body>
 </html>
 """
