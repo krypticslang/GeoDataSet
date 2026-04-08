@@ -345,6 +345,31 @@ HTML = """
       </div>
     {% endif %}
 
+    {% if view_assets %}
+      <div class="card" style="margin-bottom:14px;">
+        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">Vista</h2>
+        <div class="small">Verifica lo que se midió: regla detectada, máscara y contorno.</div>
+        <div class="kpi" style="margin-top:12px;">
+          <div class="k"><div class="l">px por cm</div><div class="v">{{ '%.3f'|format(view_assets.px_per_cm) }}</div></div>
+          <div class="k"><div class="l">fuente escala</div><div class="v">{{ view_assets.px_per_cm_source }}</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; margin-top:12px;">
+          <div style="border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03);">
+            <div class="small" style="padding:10px 10px 0;">Imagen</div>
+            <img alt="input" src="{{ view_assets.input_url }}" style="display:block; width:100%; height:auto;" />
+          </div>
+          <div style="border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03);">
+            <div class="small" style="padding:10px 10px 0;">Overlay</div>
+            <img alt="overlay" src="{{ view_assets.overlay_url }}" style="display:block; width:100%; height:auto;" />
+          </div>
+          <div style="border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03);">
+            <div class="small" style="padding:10px 10px 0;">Máscara</div>
+            <img alt="mask" src="{{ view_assets.mask_url }}" style="display:block; width:100%; height:auto;" />
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
     <div class="grid">
       <div class="card">
         <form method="post" action="{{ url_for('compute_image') }}" enctype="multipart/form-data">
@@ -588,6 +613,15 @@ def create_app() -> Flask:
             is_error=False,
             debug_zip_url=None,
             integrand_rows=None,
+            component_choices=None,
+            run_id=None,
+            step_cm=None,
+            method=None,
+            resample=None,
+            step=None,
+            gemini_fallback=None,
+            save_debug=None,
+            view_assets=None,
         )
 
     @app.get("/debug/<run_id>.zip")
@@ -630,6 +664,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         f = request.files["file"]
@@ -643,6 +686,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         try:
@@ -657,6 +709,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         col_z = request.form.get("col_z", "z_cm")
@@ -671,6 +732,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         y_mode = request.form.get("y_mode", "area")
@@ -694,6 +764,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         try:
@@ -718,6 +797,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         return render_template_string(
@@ -729,6 +817,15 @@ def create_app() -> Flask:
             is_error=False,
             debug_zip_url=None,
             integrand_rows=(list(zip(result.z_used, result.A_used))[:200] if result.z_used and result.A_used else None),
+            component_choices=None,
+            run_id=None,
+            step_cm=None,
+            method=None,
+            resample=None,
+            step=None,
+            gemini_fallback=None,
+            save_debug=None,
+            view_assets=None,
         )
 
     @app.post("/compute/image")
@@ -868,6 +965,7 @@ def create_app() -> Flask:
                 step=None,
                 gemini_fallback=None,
                 save_debug=None,
+                view_assets=None,
             )
 
         f = request.files["image"]
@@ -889,6 +987,7 @@ def create_app() -> Flask:
                 step=None,
                 gemini_fallback=None,
                 save_debug=None,
+                view_assets=None,
             )
 
         try:
@@ -922,6 +1021,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         debug_zip_url = None
@@ -949,6 +1057,14 @@ def create_app() -> Flask:
             cv2.imwrite(str(run_path / "overlay.png"), dbg.overlay_bgr)
             pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)}).to_csv(run_path / "profile.csv", index=False)
             debug_zip_url = url_for("download_debug", run_id=run_id)
+
+            view_assets = {
+                "input_url": url_for("debug_asset", run_id=run_id, name="input.jpg"),
+                "overlay_url": url_for("debug_asset", run_id=run_id, name="overlay.png"),
+                "mask_url": url_for("debug_asset", run_id=run_id, name="mask.png"),
+                "px_per_cm": float(pr.px_per_cm),
+                "px_per_cm_source": str(dbg.px_per_cm_source),
+            }
 
             infos, masks = connected_components(dbg.mask, min_area_px=2500, max_components=6)
             if len(infos) >= 2:
@@ -987,6 +1103,7 @@ def create_app() -> Flask:
                     step=step,
                     gemini_fallback=allow_gemini_fallback,
                     save_debug=save_debug,
+                    view_assets=view_assets,
                 )
 
         df_new = pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)})
@@ -1014,6 +1131,15 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=debug_zip_url,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
             )
 
         return render_template_string(
@@ -1033,6 +1159,7 @@ def create_app() -> Flask:
             step=None,
             gemini_fallback=None,
             save_debug=None,
+            view_assets=(view_assets if (save_debug and dbg is not None) else None),
         )
 
     @app.get("/examples/<name>")

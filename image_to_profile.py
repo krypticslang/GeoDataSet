@@ -273,6 +273,16 @@ def profile_from_image_bytes_with_debug(
             raise ValueError("Escala inválida (Gemini): muy pocos pixeles por cm")
 
     mask = _segment_object_mask(img)
+    if ruler_line is not None:
+        h, w = mask.shape[:2]
+        thickness = int(max(8, round(0.035 * float(h))))
+        rm = np.zeros((h, w), dtype=np.uint8)
+        x1, y1, x2, y2 = ruler_line
+        cv2.line(rm, (int(x1), int(y1)), (int(x2), int(y2)), 1, thickness)
+        mask = (mask > 0).astype(np.uint8)
+        mask[rm > 0] = 0
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     z_cm, r_cm = profile_from_mask(mask, px_per_cm=float(px_per_cm), step_cm=float(step_cm))
 
     overlay = img.copy()
