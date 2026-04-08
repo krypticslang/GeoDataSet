@@ -13,7 +13,7 @@ from flask import Flask, Response, render_template_string, request, url_for
 
 import cv2
 
-from image_to_profile import profile_from_image_bytes, profile_from_image_bytes_with_debug
+from image_to_profile import connected_components, profile_from_image_bytes, profile_from_image_bytes_with_debug, profile_from_mask
 
 
 @dataclass(frozen=True)
@@ -314,6 +314,37 @@ HTML = """
       <div class="{{ 'err' if is_error else 'ok' }}">{{ message }}</div>
     {% endif %}
 
+    {% if component_choices %}
+      <div class="card" style="margin-bottom:14px;">
+        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">Selecciona el objeto</h2>
+        <div class="small">Detecté múltiples objetos. Elige cuál integrar (verás el contorno).</div>
+        <form method="post" action="{{ url_for('compute_image') }}" style="margin-top:12px;">
+          <input type="hidden" name="run_id" value="{{ run_id }}" />
+          <input type="hidden" name="step_cm" value="{{ step_cm }}" />
+          <input type="hidden" name="method" value="{{ method }}" />
+          <input type="hidden" name="resample" value="{{ 'yes' if resample else '' }}" />
+          <input type="hidden" name="step" value="{{ step }}" />
+          <input type="hidden" name="gemini_fallback" value="{{ 'yes' if gemini_fallback else '' }}" />
+          <input type="hidden" name="save_debug" value="{{ 'yes' if save_debug else '' }}" />
+
+          <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; margin-top:10px;">
+            {% for c in component_choices %}
+              <label style="display:block; border:1px solid var(--border); background:rgba(255,255,255,.03); border-radius:14px; padding:10px; cursor:pointer;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                  <div class="small">Componente {{ c.component_id }} · área {{ c.area_px }} px</div>
+                  <input type="radio" name="component_id" value="{{ c.component_id }}" {% if loop.index0 == 0 %}checked{% endif %} />
+                </div>
+                <div style="margin-top:10px; overflow:hidden; border-radius:12px; border:1px solid var(--border);">
+                  <img alt="preview" src="{{ c.preview_url }}" style="display:block; width:100%; height:auto;" />
+                </div>
+              </label>
+            {% endfor %}
+          </div>
+          <button class="btn" type="submit" style="margin-top:12px;">Usar objeto seleccionado</button>
+        </form>
+      </div>
+    {% endif %}
+
     <div class="grid">
       <div class="card">
         <form method="post" action="{{ url_for('compute_image') }}" enctype="multipart/form-data">
@@ -572,6 +603,21 @@ def create_app() -> Flask:
             headers={"Content-Disposition": f"attachment; filename=debug_{safe}.zip"},
         )
 
+    @app.get("/debug/<run_id>/<name>")
+    def debug_asset(run_id: str, name: str) -> Response:
+        safe = "".join([c for c in run_id if c.isalnum() or c in ("-", "_")])
+        safe_name = "".join([c for c in name if c.isalnum() or c in ("-", "_", ".")])
+        path = debug_dir / safe / safe_name
+        if not path.exists() or not path.is_file():
+            return Response("Not found", status=404)
+        if safe_name.lower().endswith(".png"):
+            mt = "image/png"
+        elif safe_name.lower().endswith(".jpg") or safe_name.lower().endswith(".jpeg"):
+            mt = "image/jpeg"
+        else:
+            mt = "application/octet-stream"
+        return Response(path.read_bytes(), mimetype=mt)
+
     @app.post("/compute/csv")
     def compute_csv() -> str:
         if "file" not in request.files:
@@ -687,6 +733,123 @@ def create_app() -> Flask:
 
     @app.post("/compute/image")
     def compute_image() -> str:
+        run_id_in = request.form.get("run_id", "").strip()
+        component_id_in = request.form.get("component_id", "").strip()
+
+        if run_id_in and component_id_in:
+            safe = "".join([c for c in run_id_in if c.isalnum() or c in ("-", "_")])
+            run_path = debug_dir / safe
+            if not run_path.exists():
+                return render_template_string(
+                    HTML,
+                    result=None,
+                    rows=None,
+                    y_mode="radius",
+                    message="Sesión de selección inválida (debug run no existe).",
+                    is_error=True,
+                    debug_zip_url=None,
+                    integrand_rows=None,
+                    component_choices=None,
+                    run_id=None,
+                    step_cm=None,
+                    method=None,
+                    resample=None,
+                    step=None,
+                    gemini_fallback=None,
+                    save_debug=None,
+                )
+
+            try:
+                meta = json.loads((run_path / "meta.json").read_text(encoding="utf-8"))
+                px_per_cm = float(meta["px_per_cm"])
+                step_cm = float(meta["step_cm"])
+                method = str(meta["method"])
+                resample = bool(meta["resample"])
+                step = float(meta["step"])
+                comp_id = int(component_id_in)
+                mask_path = run_path / f"component_{comp_id}.png"
+                if not mask_path.exists():
+                    raise ValueError("Máscara de componente no encontrada")
+                mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+                if mask is None:
+                    raise ValueError("No se pudo leer máscara")
+                mask01 = (mask > 0).astype(np.uint8)
+                z_cm, r_cm = profile_from_mask(mask01, px_per_cm=px_per_cm, step_cm=step_cm)
+                pr_z, pr_r = z_cm, r_cm
+            except Exception as e:
+                return render_template_string(
+                    HTML,
+                    result=None,
+                    rows=None,
+                    y_mode="radius",
+                    message=f"Error usando selección: {e}",
+                    is_error=True,
+                    debug_zip_url=None,
+                    integrand_rows=None,
+                    component_choices=None,
+                    run_id=None,
+                    step_cm=None,
+                    method=None,
+                    resample=None,
+                    step=None,
+                    gemini_fallback=None,
+                    save_debug=None,
+                )
+
+            df_new = pd.DataFrame({"z_cm": pr_z.astype(float), "r_cm": pr_r.astype(float)})
+            df_new = df_new.sort_values("z_cm").reset_index(drop=True)
+
+            if collected_path.exists():
+                df_all = pd.read_csv(collected_path)
+                df_all = pd.concat([df_all, df_new], ignore_index=True)
+            else:
+                df_all = df_new
+            df_all.to_csv(collected_path, index=False)
+
+            rows_profile = [ProfileRow(z=float(z), r=float(r)) for z, r in zip(df_new["z_cm"], df_new["r_cm"])]
+            rows_table = [TableRow(z=row.z, r=row.r, A=float(np.pi * (row.r**2))) for row in rows_profile]
+
+            try:
+                result = volume_from_profile(df_new["z_cm"].to_numpy(), df_new["r_cm"].to_numpy(), method=method, resample=resample, step=step)
+            except Exception as e:
+                return render_template_string(
+                    HTML,
+                    result=None,
+                    rows=rows_table,
+                    y_mode="radius",
+                    message=str(e),
+                    is_error=True,
+                    debug_zip_url=url_for("download_debug", run_id=safe),
+                    integrand_rows=None,
+                    component_choices=None,
+                    run_id=None,
+                    step_cm=None,
+                    method=None,
+                    resample=None,
+                    step=None,
+                    gemini_fallback=None,
+                    save_debug=None,
+                )
+
+            return render_template_string(
+                HTML,
+                result=result,
+                rows=rows_table,
+                y_mode="radius",
+                message=f"Perfil extraído (selección) y guardado en {collected_path.name}.",
+                is_error=False,
+                debug_zip_url=url_for("download_debug", run_id=safe),
+                integrand_rows=(list(zip(result.z_used, result.A_used))[:200] if result.z_used and result.A_used else None),
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+            )
+
         if "image" not in request.files:
             return render_template_string(
                 HTML,
@@ -697,6 +860,14 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
             )
 
         f = request.files["image"]
@@ -710,6 +881,14 @@ def create_app() -> Flask:
                 is_error=True,
                 debug_zip_url=None,
                 integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
             )
 
         try:
@@ -771,6 +950,45 @@ def create_app() -> Flask:
             pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)}).to_csv(run_path / "profile.csv", index=False)
             debug_zip_url = url_for("download_debug", run_id=run_id)
 
+            infos, masks = connected_components(dbg.mask, min_area_px=2500, max_components=6)
+            if len(infos) >= 2:
+                component_choices = []
+                for info, cmask in zip(infos, masks):
+                    overlay = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    if overlay is None:
+                        overlay = dbg.overlay_bgr.copy()
+                    contours, _ = cv2.findContours((cmask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if len(contours) > 0:
+                        cv2.drawContours(overlay, contours, -1, (0, 255, 0), 3)
+                    cv2.imwrite(str(run_path / f"preview_{info.component_id}.png"), overlay)
+                    cv2.imwrite(str(run_path / f"component_{info.component_id}.png"), (cmask * 255).astype(np.uint8))
+                    component_choices.append(
+                        {
+                            "component_id": info.component_id,
+                            "area_px": info.area_px,
+                            "preview_url": url_for("debug_asset", run_id=run_id, name=f"preview_{info.component_id}.png"),
+                        }
+                    )
+
+                return render_template_string(
+                    HTML,
+                    result=None,
+                    rows=None,
+                    y_mode="radius",
+                    message="Selecciona el objeto a integrar.",
+                    is_error=False,
+                    debug_zip_url=debug_zip_url,
+                    integrand_rows=None,
+                    component_choices=component_choices,
+                    run_id=run_id,
+                    step_cm=step_cm,
+                    method=method,
+                    resample=resample,
+                    step=step,
+                    gemini_fallback=allow_gemini_fallback,
+                    save_debug=save_debug,
+                )
+
         df_new = pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)})
         df_new = df_new.sort_values("z_cm").reset_index(drop=True)
 
@@ -807,6 +1025,14 @@ def create_app() -> Flask:
             is_error=False,
             debug_zip_url=debug_zip_url,
             integrand_rows=(list(zip(result.z_used, result.A_used))[:200] if result.z_used and result.A_used else None),
+            component_choices=None,
+            run_id=None,
+            step_cm=None,
+            method=None,
+            resample=None,
+            step=None,
+            gemini_fallback=None,
+            save_debug=None,
         )
 
     @app.get("/examples/<name>")

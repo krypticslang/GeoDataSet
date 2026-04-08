@@ -23,6 +23,13 @@ class ProfileDebug:
     px_per_cm_source: str
 
 
+@dataclass(frozen=True)
+class ComponentInfo:
+    component_id: int
+    area_px: int
+    bbox: tuple[int, int, int, int]
+
+
 def _largest_connected_component(mask: np.ndarray) -> np.ndarray:
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
     if num_labels <= 1:
@@ -146,6 +153,75 @@ def _segment_object_mask(img_bgr: np.ndarray) -> np.ndarray:
     return (mask > 0).astype(np.uint8)
 
 
+def connected_components(mask01: np.ndarray, *, min_area_px: int = 1500, max_components: int = 8) -> tuple[list[ComponentInfo], list[np.ndarray]]:
+    m = (mask01 > 0).astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    infos: list[ComponentInfo] = []
+    masks: list[np.ndarray] = []
+    if num_labels <= 1:
+        return infos, masks
+
+    items: list[tuple[int, int, tuple[int, int, int, int]]] = []
+    for cid in range(1, num_labels):
+        area = int(stats[cid, cv2.CC_STAT_AREA])
+        if area < int(min_area_px):
+            continue
+        x = int(stats[cid, cv2.CC_STAT_LEFT])
+        y = int(stats[cid, cv2.CC_STAT_TOP])
+        w = int(stats[cid, cv2.CC_STAT_WIDTH])
+        h = int(stats[cid, cv2.CC_STAT_HEIGHT])
+        items.append((cid, area, (x, y, w, h)))
+
+    items.sort(key=lambda t: t[1], reverse=True)
+    items = items[: int(max_components)]
+
+    for idx, (cid, area, bbox) in enumerate(items):
+        comp_mask = (labels == cid).astype(np.uint8)
+        infos.append(ComponentInfo(component_id=idx, area_px=area, bbox=bbox))
+        masks.append(comp_mask)
+
+    return infos, masks
+
+
+def profile_from_mask(mask01: np.ndarray, *, px_per_cm: float, step_cm: float) -> tuple[np.ndarray, np.ndarray]:
+    if step_cm <= 0:
+        raise ValueError("step_cm debe ser > 0")
+    if px_per_cm <= 0:
+        raise ValueError("px_per_cm inválido")
+
+    mask = (mask01 > 0).astype(np.uint8)
+    ys, xs = np.where(mask > 0)
+    if ys.size < 1000:
+        raise ValueError("No se pudo segmentar el objeto (muy pocos pixeles).")
+
+    y_min = int(np.min(ys))
+    y_max = int(np.max(ys))
+
+    z_max_cm = float((y_max - y_min) / float(px_per_cm))
+    if z_max_cm <= 0:
+        raise ValueError("Altura inválida detectada")
+
+    z_cm = np.arange(0.0, z_max_cm + 0.5 * step_cm, float(step_cm), dtype=float)
+    r_cm = np.zeros_like(z_cm, dtype=float)
+    for i, z in enumerate(z_cm):
+        y = int(round(y_max - z * float(px_per_cm)))
+        y = int(np.clip(y, 0, mask.shape[0] - 1))
+
+        row = mask[y, :]
+        idx = np.where(row > 0)[0]
+        if idx.size < 2:
+            r_cm[i] = np.nan
+            continue
+        width_px = float(idx[-1] - idx[0])
+        r_cm[i] = 0.5 * (width_px / float(px_per_cm))
+
+    good = np.isfinite(r_cm) & (r_cm > 0)
+    if int(np.sum(good)) < 3:
+        raise ValueError("No se pudo calcular r(z) suficiente.")
+
+    return z_cm[good], r_cm[good]
+
+
 def profile_from_image_bytes(
     image_bytes: bytes,
     *,
@@ -197,39 +273,7 @@ def profile_from_image_bytes_with_debug(
             raise ValueError("Escala inválida (Gemini): muy pocos pixeles por cm")
 
     mask = _segment_object_mask(img)
-
-    ys, xs = np.where(mask > 0)
-    if ys.size < 1000:
-        raise ValueError("No se pudo segmentar el objeto (muy pocos pixeles). Usa fondo más uniforme y buena iluminación.")
-
-    y_min = int(np.min(ys))
-    y_max = int(np.max(ys))
-
-    z_max_cm = float((y_max - y_min) / px_per_cm)
-    if z_max_cm <= 0:
-        raise ValueError("Altura inválida detectada")
-
-    z_cm = np.arange(0.0, z_max_cm + 0.5 * step_cm, float(step_cm), dtype=float)
-
-    r_cm = np.zeros_like(z_cm, dtype=float)
-    for i, z in enumerate(z_cm):
-        y = int(round(y_max - z * px_per_cm))
-        y = int(np.clip(y, 0, mask.shape[0] - 1))
-
-        row = mask[y, :]
-        idx = np.where(row > 0)[0]
-        if idx.size < 2:
-            r_cm[i] = np.nan
-            continue
-        width_px = float(idx[-1] - idx[0])
-        r_cm[i] = 0.5 * (width_px / px_per_cm)
-
-    good = np.isfinite(r_cm) & (r_cm > 0)
-    if int(np.sum(good)) < 3:
-        raise ValueError("No se pudo calcular r(z) suficiente. Intenta una foto más perpendicular y con fondo contrastante.")
-
-    z_cm = z_cm[good]
-    r_cm = r_cm[good]
+    z_cm, r_cm = profile_from_mask(mask, px_per_cm=float(px_per_cm), step_cm=float(step_cm))
 
     overlay = img.copy()
     contours, _ = cv2.findContours((mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
