@@ -236,7 +236,14 @@ def profile_from_mask(mask01: np.ndarray, *, px_per_cm: float, step_cm: float) -
         raise ValueError("px_per_cm inválido")
 
     mask = (mask01 > 0).astype(np.uint8)
-    ys, xs = np.where(mask > 0)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    if num_labels <= 1:
+        raise ValueError("No se pudo segmentar el objeto (sin componentes).")
+
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    main_label = int(np.argmax(areas)) + 1
+
+    ys, xs = np.where(labels == main_label)
     if ys.size < 1000:
         raise ValueError("No se pudo segmentar el objeto (muy pocos pixeles).")
 
@@ -253,8 +260,8 @@ def profile_from_mask(mask01: np.ndarray, *, px_per_cm: float, step_cm: float) -
         y = int(round(y_max - z * float(px_per_cm)))
         y = int(np.clip(y, 0, mask.shape[0] - 1))
 
-        row = mask[y, :]
-        idx = np.where(row > 0)[0]
+        row = labels[y, :]
+        idx = np.where(row == main_label)[0]
         if idx.size < 2:
             r_cm[i] = np.nan
             continue
@@ -321,14 +328,67 @@ def profile_from_image_bytes_with_debug(
     mask = _segment_object_mask(img)
     if ruler_line is not None:
         h, w = mask.shape[:2]
-        thickness = int(max(8, round(0.035 * float(h))))
-        rm = np.zeros((h, w), dtype=np.uint8)
         x1, y1, x2, y2 = ruler_line
+
+        y_r = int(round(0.5 * (float(y1) + float(y2))))
+        y_r = int(np.clip(y_r, 0, h - 1))
+
+        thickness = int(max(10, round(0.080 * float(h))))
+        rm = np.zeros((h, w), dtype=np.uint8)
         cv2.line(rm, (int(x1), int(y1)), (int(x2), int(y2)), 1, thickness)
+
         mask = (mask > 0).astype(np.uint8)
         mask[rm > 0] = 0
+
+        margin = int(max(12, round(0.5 * float(thickness))))
+        y_top = int(max(0, y_r - margin))
+        y_bot = int(min(h, y_r + margin))
+
+        top_mask = mask.copy()
+        top_mask[y_bot:, :] = 0
+        bot_mask = mask.copy()
+        bot_mask[:y_top, :] = 0
+
+        def _best_component(m: np.ndarray) -> tuple[np.ndarray, float] | tuple[None, float]:
+            m = (m > 0).astype(np.uint8)
+            num, lbl, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+            if num <= 1:
+                return None, 0.0
+            best_score = -1.0
+            best_comp = None
+            for cid in range(1, num):
+                area = float(stats[cid, cv2.CC_STAT_AREA])
+                x = float(stats[cid, cv2.CC_STAT_LEFT])
+                bw = float(stats[cid, cv2.CC_STAT_WIDTH])
+                if area < 1500.0:
+                    continue
+                width_frac = bw / float(w)
+                if width_frac >= 0.90:
+                    continue
+                score = area
+                if score > best_score:
+                    best_score = score
+                    best_comp = (lbl == cid).astype(np.uint8)
+            if best_comp is None:
+                return None, 0.0
+            return best_comp, float(best_score)
+
+        top_comp, top_score = _best_component(top_mask)
+        bot_comp, bot_score = _best_component(bot_mask)
+
+        if top_score >= bot_score and top_comp is not None:
+            mask = top_comp
+        elif bot_comp is not None:
+            mask = bot_comp
+        else:
+            if int(np.sum(top_mask)) >= int(np.sum(bot_mask)):
+                mask = top_mask
+            else:
+                mask = bot_mask
+
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        mask = _largest_connected_component(mask)
     z_cm, r_cm = profile_from_mask(mask, px_per_cm=float(px_per_cm), step_cm=float(step_cm))
 
     overlay = img.copy()
