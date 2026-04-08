@@ -1,93 +1,259 @@
-# Proyecto (Análisis Numérico): Volumen por Dataset
+# Image-to-Volume (Análisis Numérico)
 
-Este proyecto calcula el volumen de un sólido (aprox. sólido de revolución) a partir de mediciones `r(z)`.
+Aplicación local (Flask) para estimar el volumen de un sólido **aproximado como sólido de revolución** a partir de un perfil `r(z)`.
 
-## Idea
+Puedes alimentar el sistema de dos formas:
 
-Si se mide el radio `r(z)` a distintas alturas `z`, el volumen se aproxima por:
+- **Modo Imagen (recomendado)**: subes una foto (objeto + regla de 30 cm), se extrae el perfil `z_cm,r_cm`, se guarda en `datasets/collected.csv` y se calcula el volumen.
+- **Modo CSV**: subes un dataset `z` y `r` (o `A`), y se integra directamente.
 
-V ≈ ∫ A(z) dz
+---
 
-con A(z) = π r(z)^2.
+## Fundamento matemático
 
-## Dataset
+La aproximación usada es:
 
-Formato CSV recomendado:
+\[
+V \approx \int_{z_{min}}^{z_{max}} A(z)\, dz
+\]
 
-### Opción A: `z_cm` y `r_cm`
+donde:
 
-Columnas:
-- `z_cm`
-- `r_cm`
+- Si mides radio: \(A(z) = \pi r(z)^2\)
+- Si ya tienes área: \(A(z)\) es tu dataset
 
-### Opción B: `z_cm` y `A_cm2`
+Unidades:
 
-Columnas:
-- `z_cm`
-- `A_cm2`
+- Si `z` está en **cm** y `A` en **cm²**, entonces `V` sale en **cm³**.
 
-Ejemplos en `datasets/example_r.csv` y `datasets/example_A.csv`.
+---
 
-Además, el sistema puede generar/actualizar un dataset acumulado:
-
-- `datasets/collected.csv`
-
-## Ejecutar
+## Instalación y ejecución
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Front local (Flask)
 python webapp.py
 ```
 
-Abre en el navegador:
+Abrir en el navegador:
 
-- http://127.0.0.1:8000
+- http://127.0.0.1:8002
 
-## Flujo principal (recomendado): Imagen → collected.csv → Volumen
+---
 
-1. Toma una foto del **objeto de perfil** junto a una **regla de 30 cm** (la regla debe verse completa).
-2. En la web, sube la imagen.
-3. El sistema:
-   - estima la escala usando la regla (pixeles → cm)
-   - extrae un perfil `z_cm,r_cm`
-   - hace append a `datasets/collected.csv`
-   - calcula el volumen
-4. Puedes descargar `collected.csv` desde el link en la página.
+## Interfaz: Tabs + Wizard (orden de uso)
 
-## API Key (Gemini) (opcional)
+La UI está organizada en **tabs** para evitar ver todo al mismo tiempo:
 
-El proyecto está listo para integrar Gemini como fallback, pero por seguridad **NO hace llamadas** por defecto.
+- **Imagen**: flujo principal tipo wizard (subir → seleccionar objeto si aplica → ver resultado).
+- **Vista**: inspección visual (imagen, overlay, máscara, escala estimada).
+- **Integración**: muestra exactamente qué se integró (tabla de `z` y `A(z)` ya preparada, incluye remuestreo).
+- **Datos**: tabla del dataset usado (`z`, `r`, `A`).
+- **CSV**: modo alternativo para integrar un dataset directamente.
 
-Cuando tengas la key:
+### Wizard (tab Imagen)
+
+#### Paso 1: Subir imagen
+
+Requisitos recomendados:
+
+- Objeto de perfil.
+- Regla de **30 cm completa** visible.
+- Regla y objeto en el mismo plano.
+- Buena iluminación y fondo contrastante.
+
+Parámetros:
+
+- `Paso de muestreo (cm)`: define el espaciado de `z` al extraer `r(z)`.
+- `Método`: `trapezoidal` o `simpson`.
+- `Remuestrear`: si activas Simpson, se recomienda remuestrear a malla uniforme.
+- `Paso Δz`: tamaño del paso al remuestrear.
+
+#### Paso 2: Seleccionar objeto (si aplica)
+
+Si la segmentación detecta múltiples componentes, la app te muestra un selector con **outlines**.
+
+Tú eliges el componente correcto y el sistema integra ese objeto.
+
+#### Paso 3: Resultado
+
+Se muestra:
+
+- Volumen
+- `z_min`, `z_max`
+- cantidad de puntos
+- método usado
+
+---
+
+## ¿Cómo funciona el pipeline de imagen?
+
+En `image_to_profile.py`:
+
+1) **Decodificar imagen**
+
+2) **Estimación de escala `px_per_cm` usando la regla**
+
+- Método local: detección de líneas con Canny + HoughLinesP y selección de la línea más larga
+- Si falla el método local y está permitido, usa Gemini como fallback
+
+3) **Segmentación (máscara) del objeto**
+
+- Se usa un umbral automático (Otsu) sobre canal L (LAB) con realce por CLAHE
+- Se limpia con morfología
+
+4) **Mejora clave de robustez**
+
+- Se elimina de la máscara la banda alrededor de la línea de la regla (para evitar que la regla domine la segmentación).
+
+5) **Extracción de perfil `r(z)`**
+
+- Se recorre `z` en pasos `step_cm`.
+- Para cada `z`, se toma una fila horizontal del mask y se estima el ancho del objeto (en pixeles).
+- Se convierte a cm con `px_per_cm` y se calcula el radio.
+
+6) (Opcional) **Artefactos de debug**
+
+Si activas debug, se guardan imágenes y metadata para depurar.
+
+---
+
+## Panel “Vista” (qué se midió)
+
+Si activas **Guardar artefactos de debug**, el tab **Vista** muestra:
+
+- Imagen original
+- Overlay (contorno + regla)
+- Máscara
+- `px_per_cm` y fuente (`local` o `gemini`)
+
+Esto sirve para validar rápidamente:
+
+- Si la regla fue detectada correctamente
+- Si el objeto fue segmentado correctamente
+
+---
+
+## Debug artifacts (bug fixing)
+
+Cada corrida de debug crea:
+
+- `debug_runs/<run_id>/meta.json`
+- `debug_runs/<run_id>/input.jpg`
+- `debug_runs/<run_id>/mask.png`
+- `debug_runs/<run_id>/overlay.png`
+- `debug_runs/<run_id>/profile.csv`
+
+Y si hubo selección de objetos:
+
+- `component_<id>.png` (máscara del componente)
+- `preview_<id>.png` (overlay con contorno)
+
+Puedes descargar todo como `.zip` desde el link en Resultado.
+
+---
+
+## Dataset CSV
+
+Ejemplos incluidos:
+
+- `datasets/example_r.csv`
+- `datasets/example_A.csv`
+
+Y dataset acumulado:
+
+- `datasets/collected.csv`
+
+Formatos:
+
+### Opción A: `z_cm` y `r_cm`
+
+- `z_cm`: altura
+- `r_cm`: radio
+
+### Opción B: `z_cm` y `A_cm2`
+
+- `z_cm`: altura
+- `A_cm2`: área
+
+---
+
+## Métodos numéricos implementados
+
+En `webapp.py`:
+
+### Integración
+
+- **Trapezoidal compuesto** (`trapezoidal`)
+- **Simpson compuesto** (`simpson`)
+  - Requiere **espaciado uniforme**; por eso existe el remuestreo.
+
+### Remuestreo
+
+Si activas `Remuestrear a malla uniforme`, se interpola linealmente a un `Δz` fijo.
+
+### Interpolación (modo CSV)
+
+En el flujo CSV existen implementaciones de:
+
+- Lagrange
+- Newton (diferencias divididas)
+
+Estas se usan para evaluar `A(z)` en un conjunto de puntos nuevo si habilitas esa opción.
+
+---
+
+## Gemini 1.5 (opcional) y seguridad anti-créditos
+
+Gemini se usa **solo** como fallback para obtener los extremos de la regla en pixeles.
+
+Por seguridad:
+
+- Aunque tengas `GEMINI_API_KEY`, **no se llama** la API a menos que:
+  - `GEMINI_ENABLE_CALLS=1`
+  - y actives el switch “Usar Gemini como fallback” en el front
+
+### Configuración
 
 ```bash
 export GEMINI_API_KEY="TU_KEY"
-```
-
-Para habilitar llamadas (solo cuando tú lo decidas):
-
-```bash
 export GEMINI_ENABLE_CALLS=1
 ```
 
-Luego, en el front, activa el switch **"Usar Gemini como fallback"**.
+---
 
-## Modo CLI (por dataset)
+## Endpoints (Flask)
 
-```bash
-python main.py --dataset datasets/example_r.csv --columns z_cm r_cm --area-from-radius --method simpson --resample-step 1
-python main.py --dataset datasets/example_A.csv --columns z_cm A_cm2 --method trapezoidal
-```
+- `GET /` UI
+- `POST /compute/image` flujo imagen
+- `POST /compute/csv` flujo CSV
+- `GET /collected.csv` descargar dataset acumulado
+- `GET /examples/<name>` descargar ejemplos
+- `GET /debug/<run_id>.zip` descargar artefactos
+- `GET /debug/<run_id>/<name>` servir assets de debug (png/jpg)
 
-## Métodos
+---
 
-- Integración:
-  - `trapezoidal`
-  - `simpson`
-- Interpolación (opcional para evaluar A(z) en nuevos puntos):
-  - `newton`
-  - `lagrange`
+## Troubleshooting
+
+### La máscara agarra la regla
+
+- Activa “Guardar artefactos de debug”
+- Ve a tab **Vista** y revisa `mask` y `overlay`
+- Si hay múltiples componentes, usa el selector
+
+### Simpson falla
+
+Simpson requiere paso uniforme. Solución:
+
+- Activa `Remuestrear a malla uniforme`
+
+### Volumen demasiado grande
+
+Revisa el tab **Integración**:
+
+- Si `A(z)` es enorme, el perfil `r(z)` probablemente está sobreestimado (por perspectiva o segmentación).
+

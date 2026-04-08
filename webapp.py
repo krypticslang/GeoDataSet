@@ -320,6 +320,46 @@ HTML = """
     .preview img{display:block; width:100%; height:auto;}
     .muted{color:var(--muted2);}
 
+    .tabs{display:flex; gap:10px; flex-wrap:wrap; margin:14px 0;}
+    .tab{
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.04);
+      color:var(--fg);
+      border-radius:999px;
+      padding:9px 12px;
+      font-size:12px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .tab[aria-selected="true"]{
+      border-color:rgba(124,58,237,.60);
+      background:rgba(124,58,237,.22);
+    }
+    .panel{display:none;}
+    .panel.active{display:block;}
+    .stepper{display:flex; gap:10px; flex-wrap:wrap; margin:0 0 12px;}
+    .step{
+      display:flex; align-items:center; gap:8px;
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.03);
+      font-size:12px;
+      color:var(--muted);
+      font-weight:800;
+    }
+    .step .n{
+      width:20px; height:20px; border-radius:999px;
+      display:inline-flex; align-items:center; justify-content:center;
+      background:rgba(255,255,255,.10);
+      color:var(--fg);
+      border:1px solid var(--border);
+      font-size:12px;
+      flex:0 0 auto;
+    }
+    .step.done{color:rgba(238,242,255,.92); border-color:rgba(34,197,94,.35); background:rgba(34,197,94,.10);}
+    .step.done .n{background:rgba(34,197,94,.20); border-color:rgba(34,197,94,.40);}
+
     @media (max-width: 980px){
       .grid{grid-template-columns: 1fr;}
       table{min-width: 640px;}
@@ -344,264 +384,288 @@ HTML = """
       <div class="{{ 'err' if is_error else 'ok' }}">{{ message }}</div>
     {% endif %}
 
-    {% if component_choices %}
-      <div class="card" style="margin-bottom:14px;">
-        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">Selecciona el objeto</h2>
-        <div class="small">Detecté múltiples objetos. Elige cuál integrar (verás el contorno).</div>
-        <form method="post" action="{{ url_for('compute_image') }}" style="margin-top:12px;">
-          <input type="hidden" name="run_id" value="{{ run_id }}" />
-          <input type="hidden" name="step_cm" value="{{ step_cm }}" />
-          <input type="hidden" name="method" value="{{ method }}" />
-          <input type="hidden" name="resample" value="{{ 'yes' if resample else '' }}" />
-          <input type="hidden" name="step" value="{{ step }}" />
-          <input type="hidden" name="gemini_fallback" value="{{ 'yes' if gemini_fallback else '' }}" />
-          <input type="hidden" name="save_debug" value="{{ 'yes' if save_debug else '' }}" />
+    <div class="tabs" role="tablist" aria-label="Navegación">
+      <button class="tab" type="button" role="tab" data-tab="image" aria-selected="true">Imagen</button>
+      <button class="tab" type="button" role="tab" data-tab="view" aria-selected="false">Vista</button>
+      <button class="tab" type="button" role="tab" data-tab="integrand" aria-selected="false">Integración</button>
+      <button class="tab" type="button" role="tab" data-tab="data" aria-selected="false">Datos</button>
+      <button class="tab" type="button" role="tab" data-tab="csv" aria-selected="false">CSV</button>
+    </div>
 
-          <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; margin-top:10px;">
-            {% for c in component_choices %}
-              <label style="display:block; border:1px solid var(--border); background:rgba(255,255,255,.03); border-radius:14px; padding:10px; cursor:pointer;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                  <div class="small">Componente {{ c.component_id }} · área {{ c.area_px }} px</div>
-                  <input type="radio" name="component_id" value="{{ c.component_id }}" {% if loop.index0 == 0 %}checked{% endif %} />
-                </div>
-                <div style="margin-top:10px; overflow:hidden; border-radius:12px; border:1px solid var(--border);">
-                  <img alt="preview" src="{{ c.preview_url }}" style="display:block; width:100%; height:auto;" />
-                </div>
-              </label>
-            {% endfor %}
-          </div>
-          <button class="btn" type="submit" style="margin-top:12px;">Usar objeto seleccionado</button>
-        </form>
+    <div class="panel" id="panel-image" role="tabpanel">
+      <div class="stepper" aria-label="Wizard">
+        <div class="step done"><span class="n">1</span><span>Sube imagen</span></div>
+        <div class="step {% if component_choices %}done{% endif %}"><span class="n">2</span><span>Selecciona objeto</span></div>
+        <div class="step {% if result %}done{% endif %}"><span class="n">3</span><span>Resultado</span></div>
       </div>
-    {% endif %}
 
-    {% if view_assets %}
-      <div class="card" style="margin-bottom:14px;">
-        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">Vista</h2>
-        <div class="small">Verifica lo que se midió: regla detectada, máscara y contorno.</div>
-        <div class="kpi" style="margin-top:12px;">
-          <div class="k"><div class="l">px por cm</div><div class="v">{{ '%.3f'|format(view_assets.px_per_cm) }}</div></div>
-          <div class="k"><div class="l">fuente escala</div><div class="v">{{ view_assets.px_per_cm_source }}</div></div>
-        </div>
-        <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; margin-top:12px;">
-          <div style="border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03);">
-            <div class="small" style="padding:10px 10px 0;">Imagen</div>
-            <img alt="input" src="{{ view_assets.input_url }}" style="display:block; width:100%; height:auto;" />
-          </div>
-          <div style="border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03);">
-            <div class="small" style="padding:10px 10px 0;">Overlay</div>
-            <img alt="overlay" src="{{ view_assets.overlay_url }}" style="display:block; width:100%; height:auto;" />
-          </div>
-          <div style="border:1px solid var(--border); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03);">
-            <div class="small" style="padding:10px 10px 0;">Máscara</div>
-            <img alt="mask" src="{{ view_assets.mask_url }}" style="display:block; width:100%; height:auto;" />
-          </div>
-        </div>
-      </div>
-    {% endif %}
+      <div class="grid">
+        <div class="card">
+          <form method="post" action="{{ url_for('compute_image') }}" enctype="multipart/form-data">
+            <div class="section-title">Paso 1 · Imagen</div>
+            <label>Imagen (objeto + regla de 30 cm)</label>
+            <input id="imageInput" type="file" name="image" accept="image/*" required />
 
-    <div class="grid">
-      <div class="card">
-        <form method="post" action="{{ url_for('compute_image') }}" enctype="multipart/form-data">
-          <div class="section-title">Entrada</div>
-          <label>Imagen (objeto + regla de 30 cm)</label>
-          <input id="imageInput" type="file" name="image" accept="image/*" required />
-
-          <div id="clientPreview" class="preview" style="margin-top:12px; display:none;">
-            <div class="small t">Previsualización</div>
-            <img id="clientPreviewImg" alt="preview" />
-          </div>
-
-          <div class="row" style="margin-top:10px;">
-            <div>
-              <label>Paso de muestreo (cm)</label>
-              <input name="step_cm" type="number" step="0.1" value="1.0" />
-            </div>
-            <div>
-              <label>Método</label>
-              <select name="method">
-                <option value="trapezoidal">trapezoidal</option>
-                <option value="simpson">simpson</option>
-              </select>
-            </div>
-          </div>
-
-          <details open>
-            <summary>Ajustes</summary>
-            <div class="switch-row">
-              <div class="txt">
-                <div class="t">Remuestrear a malla uniforme</div>
-                <div class="d">Útil para Simpson si z no es uniforme.</div>
-              </div>
-              <label class="switch" aria-label="remuestrear">
-                <input type="checkbox" name="resample" value="yes" />
-                <span class="slider"></span>
-              </label>
+            <div id="clientPreview" class="preview" style="margin-top:12px; display:none;">
+              <div class="small t">Previsualización</div>
+              <img id="clientPreviewImg" alt="preview" />
             </div>
 
-            <div class="switch-row">
-              <div class="txt">
-                <div class="t">Usar Gemini como fallback</div>
-                <div class="d">Solo si falla la detección local. Requiere `GEMINI_API_KEY` y `GEMINI_ENABLE_CALLS=1`.</div>
-              </div>
-              <label class="switch" aria-label="gemini-fallback">
-                <input type="checkbox" name="gemini_fallback" value="yes" />
-                <span class="slider"></span>
-              </label>
-            </div>
-
-            <div class="switch-row">
-              <div class="txt">
-                <div class="t">Guardar artefactos de debug</div>
-                <div class="d">Guarda imagen, máscara y overlay para bug fixing.</div>
-              </div>
-              <label class="switch" aria-label="save-debug">
-                <input type="checkbox" name="save_debug" value="yes" />
-                <span class="slider"></span>
-              </label>
-            </div>
-          </details>
-
-          <button class="btn" type="submit">Calcular volumen</button>
-          <div class="hint">Tip: iluminación uniforme + regla completa en el mismo plano que el objeto.</div>
-        </form>
-
-        <details style="margin-top:14px;">
-          <summary>Alternativa: calcular con CSV</summary>
-          <div class="small" style="margin-top:8px;">Si ya tienes un CSV, úsalo aquí.</div>
-          <form method="post" action="{{ url_for('compute_csv') }}" enctype="multipart/form-data" style="margin-top:10px;">
-            <label>Dataset CSV</label>
-            <input type="file" name="file" accept=".csv" required />
-
-            <div class="row">
+            <div class="row" style="margin-top:10px;">
               <div>
-                <label>Columna z</label>
-                <input name="col_z" placeholder="z_cm" value="z_cm" />
+                <label>Paso de muestreo (cm)</label>
+                <input name="step_cm" type="number" step="0.1" value="1.0" />
               </div>
               <div>
-                <label>Columna y</label>
-                <input name="col_y" placeholder="A_cm2 o r_cm" value="r_cm" />
+                <label>Método</label>
+                <select name="method">
+                  <option value="trapezoidal">trapezoidal</option>
+                  <option value="simpson">simpson</option>
+                </select>
               </div>
             </div>
 
-            <label>Qué representa y</label>
-            <select name="y_mode">
-              <option value="radius">radio r(z) (A=πr²)</option>
-              <option value="area">área A(z)</option>
-            </select>
-
-            <label>Método de integración</label>
-            <select name="method">
-              <option value="trapezoidal">trapezoidal</option>
-              <option value="simpson">simpson</option>
-            </select>
-
-            <div class="switch-row">
-              <div class="txt">
-                <div class="t">Remuestrear a malla uniforme</div>
-                <div class="d">Recomendado para Simpson si tus z no están uniformes.</div>
+            <details open>
+              <summary>Ajustes</summary>
+              <div class="switch-row">
+                <div class="txt">
+                  <div class="t">Remuestrear a malla uniforme</div>
+                  <div class="d">Útil para Simpson si z no es uniforme.</div>
+                </div>
+                <label class="switch" aria-label="remuestrear">
+                  <input type="checkbox" name="resample" value="yes" />
+                  <span class="slider"></span>
+                </label>
               </div>
-              <label class="switch" aria-label="remuestrear">
-                <input type="checkbox" name="resample" value="yes" />
-                <span class="slider"></span>
-              </label>
-            </div>
 
-            <label>Paso Δz (si remuestreas)</label>
-            <input name="step" type="number" step="0.01" value="1.0" />
+              <label>Paso Δz (si remuestreas)</label>
+              <input name="step" type="number" step="0.01" value="1.0" />
 
-            <button class="btn secondary" type="submit">Calcular con CSV</button>
+              <div class="switch-row">
+                <div class="txt">
+                  <div class="t">Usar Gemini como fallback</div>
+                  <div class="d">Solo si falla la detección local. Requiere `GEMINI_API_KEY` y `GEMINI_ENABLE_CALLS=1`.</div>
+                </div>
+                <label class="switch" aria-label="gemini-fallback">
+                  <input type="checkbox" name="gemini_fallback" value="yes" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="switch-row">
+                <div class="txt">
+                  <div class="t">Guardar artefactos de debug</div>
+                  <div class="d">Guarda imagen, máscara y overlay para bug fixing.</div>
+                </div>
+                <label class="switch" aria-label="save-debug">
+                  <input type="checkbox" name="save_debug" value="yes" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </details>
+
+            <button class="btn" type="submit">Extraer y calcular</button>
+            <div class="hint">Tip: iluminación uniforme + regla completa en el mismo plano que el objeto.</div>
           </form>
-        </details>
+        </div>
+
+        <div class="card">
+          <div class="section-title">Paso 3 · Resultado</div>
+          {% if result %}
+            <div class="kpi">
+              <div class="k"><div class="l">Volumen estimado</div><div class="v">{{ '%.6f'|format(result.volume) }}</div></div>
+              <div class="k"><div class="l">Método</div><div class="v">{{ result.method }}</div></div>
+              <div class="k"><div class="l">z min</div><div class="v">{{ '%.6f'|format(result.z_min) }}</div></div>
+              <div class="k"><div class="l">z max</div><div class="v">{{ '%.6f'|format(result.z_max) }}</div></div>
+              <div class="k"><div class="l">n puntos</div><div class="v">{{ result.n }}</div></div>
+            </div>
+            <p class="small" style="margin-top:10px;">Unidades: cm³ si `z` está en cm y `A` en cm².</p>
+            {% if debug_zip_url %}
+              <p class="small" style="margin-top:10px;">Debug: <a href="{{ debug_zip_url }}">descargar artefactos (.zip)</a></p>
+            {% endif %}
+          {% else %}
+            <p class="small">Aún no hay resultados. Sube una imagen y ejecuta el cálculo.</p>
+          {% endif %}
+        </div>
       </div>
 
-      <div class="card">
-        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">Resultado</h2>
-        {% if result %}
-          <div class="kpi">
-            <div class="k"><div class="l">Volumen estimado</div><div class="v">{{ '%.6f'|format(result.volume) }}</div></div>
-            <div class="k"><div class="l">Método</div><div class="v">{{ result.method }}</div></div>
-            <div class="k"><div class="l">z min</div><div class="v">{{ '%.6f'|format(result.z_min) }}</div></div>
-            <div class="k"><div class="l">z max</div><div class="v">{{ '%.6f'|format(result.z_max) }}</div></div>
-            <div class="k"><div class="l">n puntos</div><div class="v">{{ result.n }}</div></div>
-          </div>
-          <p class="small" style="margin-top:10px;">Unidades: cm³ si `z` está en cm y `A` en cm².</p>
+      {% if component_choices %}
+        <div class="card" style="margin-top:14px;">
+          <div class="section-title">Paso 2 · Selección de objeto</div>
+          <div class="small">Detecté múltiples objetos. Elige cuál integrar (verás el contorno).</div>
+          <form method="post" action="{{ url_for('compute_image') }}" style="margin-top:12px;">
+            <input type="hidden" name="run_id" value="{{ run_id }}" />
+            <input type="hidden" name="step_cm" value="{{ step_cm }}" />
+            <input type="hidden" name="method" value="{{ method }}" />
+            <input type="hidden" name="resample" value="{{ 'yes' if resample else '' }}" />
+            <input type="hidden" name="step" value="{{ step }}" />
+            <input type="hidden" name="gemini_fallback" value="{{ 'yes' if gemini_fallback else '' }}" />
+            <input type="hidden" name="save_debug" value="{{ 'yes' if save_debug else '' }}" />
 
+            <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; margin-top:10px;">
+              {% for c in component_choices %}
+                <label style="display:block; border:1px solid var(--border); background:rgba(255,255,255,.03); border-radius:14px; padding:10px; cursor:pointer;">
+                  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                    <div class="small">Componente {{ c.component_id }} · área {{ c.area_px }} px</div>
+                    <input type="radio" name="component_id" value="{{ c.component_id }}" {% if loop.index0 == 0 %}checked{% endif %} />
+                  </div>
+                  <div style="margin-top:10px; overflow:hidden; border-radius:12px; border:1px solid var(--border);">
+                    <img alt="preview" src="{{ c.preview_url }}" style="display:block; width:100%; height:auto;" />
+                  </div>
+                </label>
+              {% endfor %}
+            </div>
+            <button class="btn" type="submit" style="margin-top:12px;">Usar objeto seleccionado</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="panel" id="panel-view" role="tabpanel">
+      <div class="card">
+        <div class="section-title">Vista</div>
+        {% if view_assets %}
+          <div class="small">Verifica lo que se midió: regla detectada, máscara y contorno.</div>
+          <div class="kpi" style="margin-top:12px;">
+            <div class="k"><div class="l">px por cm</div><div class="v">{{ '%.3f'|format(view_assets.px_per_cm) }}</div></div>
+            <div class="k"><div class="l">fuente escala</div><div class="v">{{ view_assets.px_per_cm_source }}</div></div>
+          </div>
+          <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; margin-top:12px;">
+            <div class="preview"><div class="small t">Imagen</div><img alt="input" src="{{ view_assets.input_url }}" /></div>
+            <div class="preview"><div class="small t">Overlay</div><img alt="overlay" src="{{ view_assets.overlay_url }}" /></div>
+            <div class="preview"><div class="small t">Máscara</div><img alt="mask" src="{{ view_assets.mask_url }}" /></div>
+          </div>
           {% if debug_zip_url %}
             <p class="small" style="margin-top:10px;">Debug: <a href="{{ debug_zip_url }}">descargar artefactos (.zip)</a></p>
           {% endif %}
         {% else %}
-          <p class="small">Sube una imagen y calcula para ver resultados aquí.</p>
+          <div class="small">Activa “Guardar artefactos de debug” y ejecuta un cálculo para ver aquí la imagen, overlay y máscara.</div>
         {% endif %}
       </div>
     </div>
 
-    {% if integrand_rows %}
-      <div class="card" style="margin-top:14px;">
-        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">¿Qué se integró?</h2>
-        <div class="small">Mostrando z y A(z)=πr(z)² ya preparados (incluye remuestreo si aplicó).</div>
-        <div class="table-wrap" style="margin-top:10px;">
-          <table class="mono" style="min-width:560px;">
-            <thead>
-              <tr>
-                <th>z (cm)</th>
-                <th>A(z) (cm²)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in integrand_rows %}
+    <div class="panel" id="panel-integrand" role="tabpanel">
+      <div class="card">
+        <div class="section-title">Integración</div>
+        {% if integrand_rows %}
+          <div class="small">Mostrando z y A(z) ya preparados (incluye remuestreo si aplicó).</div>
+          <div class="table-wrap" style="margin-top:10px;">
+            <table class="mono" style="min-width:560px;">
+              <thead>
                 <tr>
-                  <td>{{ '%.6f'|format(row[0]) }}</td>
-                  <td>{{ '%.6f'|format(row[1]) }}</td>
+                  <th>z (cm)</th>
+                  <th>A(z) (cm²)</th>
                 </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    {% endif %}
-
-    <div class="card" style="margin-top:14px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-        <div>
-          <h2 style="font-size:14px; margin:0; color:var(--muted);">Tabla de datos</h2>
-          <div class="small">Vista previa del dataset y el cálculo de área.</div>
-        </div>
-        {% if y_mode %}
-          <span class="pill">y = {{ y_mode }}</span>
+              </thead>
+              <tbody>
+                {% for row in integrand_rows %}
+                  <tr>
+                    <td>{{ '%.6f'|format(row[0]) }}</td>
+                    <td>{{ '%.6f'|format(row[1]) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="small">Aún no hay datos de integración. Ejecuta un cálculo primero.</div>
         {% endif %}
       </div>
+    </div>
 
-      {% if rows %}
-        <div class="table-wrap">
-          <table class="mono">
-            <thead>
-              <tr>
-                <th>Altura (h en cm)</th>
-                <th>Radio (r en cm)</th>
-                <th>Área (A = π · r²)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in rows %}
-                <tr>
-                  <td>{{ '%.6f'|format(row.z) }}</td>
-                  <td>
-                    {% if row.r is none %}
-                      —
-                    {% else %}
-                      {{ '%.6f'|format(row.r) }}
-                    {% endif %}
-                  </td>
-                  <td>{{ '%.6f'|format(row.A) }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+    <div class="panel" id="panel-data" role="tabpanel">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div class="section-title">Datos</div>
+            <div class="small">Vista previa del dataset y el cálculo de área.</div>
+          </div>
+          {% if y_mode %}
+            <span class="pill">y = {{ y_mode }}</span>
+          {% endif %}
         </div>
-      {% else %}
-        <div class="small" style="margin-top:10px;">Aún no hay datos. Calcula con un CSV para ver la tabla aquí.</div>
-      {% endif %}
+
+        {% if rows %}
+          <div class="table-wrap">
+            <table class="mono">
+              <thead>
+                <tr>
+                  <th>Altura (h en cm)</th>
+                  <th>Radio (r en cm)</th>
+                  <th>Área (A = π · r²)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in rows %}
+                  <tr>
+                    <td>{{ '%.6f'|format(row.z) }}</td>
+                    <td>
+                      {% if row.r is none %}
+                        —
+                      {% else %}
+                        {{ '%.6f'|format(row.r) }}
+                      {% endif %}
+                    </td>
+                    <td>{{ '%.6f'|format(row.A) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="small" style="margin-top:10px;">Aún no hay datos. Ejecuta un cálculo para ver la tabla.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="panel" id="panel-csv" role="tabpanel">
+      <div class="card">
+        <div class="section-title">CSV</div>
+        <div class="small">Modo CSV para cuando ya tienes un dataset `z` + `r` o `A`.</div>
+        <form method="post" action="{{ url_for('compute_csv') }}" enctype="multipart/form-data" style="margin-top:10px;">
+          <label>Dataset CSV</label>
+          <input type="file" name="file" accept=".csv" required />
+
+          <div class="row">
+            <div>
+              <label>Columna z</label>
+              <input name="col_z" placeholder="z_cm" value="z_cm" />
+            </div>
+            <div>
+              <label>Columna y</label>
+              <input name="col_y" placeholder="A_cm2 o r_cm" value="r_cm" />
+            </div>
+          </div>
+
+          <label>Qué representa y</label>
+          <select name="y_mode">
+            <option value="radius">radio r(z) (A=πr²)</option>
+            <option value="area">área A(z)</option>
+          </select>
+
+          <label>Método de integración</label>
+          <select name="method">
+            <option value="trapezoidal">trapezoidal</option>
+            <option value="simpson">simpson</option>
+          </select>
+
+          <div class="switch-row">
+            <div class="txt">
+              <div class="t">Remuestrear a malla uniforme</div>
+              <div class="d">Recomendado para Simpson si tus z no están uniformes.</div>
+            </div>
+            <label class="switch" aria-label="remuestrear">
+              <input type="checkbox" name="resample" value="yes" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <label>Paso Δz (si remuestreas)</label>
+          <input name="step" type="number" step="0.01" value="1.0" />
+
+          <button class="btn secondary" type="submit">Calcular con CSV</button>
+        </form>
+      </div>
     </div>
 
     <div class="divider"></div>
@@ -621,6 +685,51 @@ HTML = """
         img.src = url;
         wrap.style.display='block';
       });
+    })();
+
+    (function(){
+      const tabs = Array.from(document.querySelectorAll('.tab'));
+      const panels = {
+        image: document.getElementById('panel-image'),
+        view: document.getElementById('panel-view'),
+        integrand: document.getElementById('panel-integrand'),
+        data: document.getElementById('panel-data'),
+        csv: document.getElementById('panel-csv'),
+      };
+
+      function pickDefault(){
+        const hasView = {{ 'true' if view_assets else 'false' }};
+        const hasIntegrand = {{ 'true' if integrand_rows else 'false' }};
+        const hasRows = {{ 'true' if rows else 'false' }};
+        const hasResult = {{ 'true' if result else 'false' }};
+        const hasComponents = {{ 'true' if component_choices else 'false' }};
+        if(hasComponents) return 'image';
+        if(hasView) return 'view';
+        if(hasResult) return 'image';
+        if(hasIntegrand) return 'integrand';
+        if(hasRows) return 'data';
+        return 'image';
+      }
+
+      function setTab(id){
+        if(!panels[id]) id = 'image';
+        tabs.forEach(t => t.setAttribute('aria-selected', (t.dataset.tab === id) ? 'true' : 'false'));
+        Object.entries(panels).forEach(([k, el]) => {
+          if(!el) return;
+          el.classList.toggle('active', k === id);
+        });
+        try{ localStorage.setItem('itv_tab', id); } catch(e){}
+        if(location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+      }
+
+      tabs.forEach(t => t.addEventListener('click', () => setTab(t.dataset.tab)));
+      const fromHash = (location.hash || '').replace('#','');
+      let initial = fromHash;
+      if(!initial){
+        try{ initial = localStorage.getItem('itv_tab') || ''; } catch(e){}
+      }
+      if(!initial) initial = pickDefault();
+      setTab(initial);
     })();
   </script>
 </body>
