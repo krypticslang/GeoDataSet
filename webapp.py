@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 import uuid
+import zipfile
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from flask import Flask, Response, render_template_string, request, url_for
 
-from image_to_profile import profile_from_image_bytes
+import cv2
+
+from image_to_profile import profile_from_image_bytes, profile_from_image_bytes_with_debug
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,8 @@ class ComputeResult:
     z_max: float
     n: int
     method: str
+    z_used: list[float] | None = None
+    A_used: list[float] | None = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +154,15 @@ def compute_from_df(
     else:
         raise ValueError("Unknown method")
 
-    return ComputeResult(volume=float(V), z_min=float(z[0]), z_max=float(z[-1]), n=int(z.size), method=method)
+    return ComputeResult(
+        volume=float(V),
+        z_min=float(z[0]),
+        z_max=float(z[-1]),
+        n=int(z.size),
+        method=method,
+        z_used=[float(v) for v in z.tolist()],
+        A_used=[float(v) for v in A.tolist()],
+    )
 
 
 def volume_from_profile(z_cm: np.ndarray, r_cm: np.ndarray, *, method: str, resample: bool, step: float) -> ComputeResult:
@@ -167,7 +181,15 @@ def volume_from_profile(z_cm: np.ndarray, r_cm: np.ndarray, *, method: str, resa
     else:
         V = composite_simpson_uniform(z, A)
 
-    return ComputeResult(volume=float(V), z_min=float(z[0]), z_max=float(z[-1]), n=int(z.size), method=method)
+    return ComputeResult(
+        volume=float(V),
+        z_min=float(z[0]),
+        z_max=float(z[-1]),
+        n=int(z.size),
+        method=method,
+        z_used=[float(v) for v in z.tolist()],
+        A_used=[float(v) for v in A.tolist()],
+    )
 
 
 def table_rows_from_df(
@@ -199,42 +221,52 @@ HTML = """
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Volumen por Dataset (Análisis Numérico)</title>
+  <title>Image-to-Volume</title>
   <style>
     *{box-sizing:border-box;}
     :root{
-      --bg:#070a0f; --panel:#0d141f; --fg:#d7ffe0; --muted:#7fe0a2; --accent:#00ff66; --border:rgba(0,255,102,.22);
+      --bg:#0b1020;
+      --panel:rgba(255,255,255,.06);
+      --panel2:rgba(255,255,255,.04);
+      --fg:#eef2ff;
+      --muted:rgba(238,242,255,.72);
+      --muted2:rgba(238,242,255,.55);
+      --accent:#7c3aed;
+      --accent2:#22c55e;
+      --border:rgba(255,255,255,.12);
     }
-    body{margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      background: radial-gradient(1200px 600px at 20% 10%, rgba(0,255,102,.10), transparent 55%),
-                  radial-gradient(900px 500px at 80% 20%, rgba(0,200,83,.10), transparent 60%),
-                  var(--bg);
+    body{margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background:
+        radial-gradient(900px 500px at 20% 10%, rgba(124,58,237,.28), transparent 55%),
+        radial-gradient(700px 450px at 85% 25%, rgba(34,197,94,.22), transparent 60%),
+        var(--bg);
       color:var(--fg);
     }
-    .wrap{max-width:1100px; margin:0 auto; padding:28px 18px 60px;}
-    h1{font-size:22px; margin:0 0 6px;}
-    .sub{color:var(--muted); margin:0 0 18px; font-size:13px;}
+    .wrap{max-width:1120px; margin:0 auto; padding:28px 18px 64px;}
+    h1{font-size:22px; margin:0 0 6px; letter-spacing:-0.2px;}
+    .sub{color:var(--muted); margin:0 0 18px; font-size:13px; line-height:1.35;}
     .grid{display:grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap:14px; align-items:start;}
-    .card{background:rgba(255,255,255,.02); border:1px solid var(--border); border-radius:14px; padding:14px; overflow:hidden;}
-    .section-title{margin:0 0 10px; font-size:13px; color:var(--muted); letter-spacing:0.2px;}
+    .card{background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:16px; overflow:hidden; backdrop-filter: blur(8px);}
+    .section-title{margin:0 0 10px; font-size:12px; color:var(--muted2); letter-spacing:0.2px; text-transform:uppercase;}
     label{display:block; font-size:12px; color:var(--muted); margin:10px 0 6px;}
-    input, select{width:100%; padding:10px; border-radius:10px; border:1px solid rgba(0,255,102,.18);
-      background:rgba(0,0,0,.25); color:var(--fg);
+    input, select{width:100%; padding:11px 12px; border-radius:12px; border:1px solid var(--border);
+      background:rgba(0,0,0,.18); color:var(--fg); outline:none;
     }
+    input:focus, select:focus{border-color:rgba(124,58,237,.55); box-shadow:0 0 0 4px rgba(124,58,237,.16);}
     .row{display:grid; grid-template-columns: 1fr 1fr; gap:10px;}
-    .btn{margin-top:12px; width:100%; padding:12px; border-radius:12px; border:1px solid rgba(0,255,102,.35);
-      background:rgba(0,255,102,.10); color:var(--fg); cursor:pointer;
+    .btn{margin-top:12px; width:100%; padding:12px; border-radius:12px; border:1px solid rgba(124,58,237,.55);
+      background:linear-gradient(180deg, rgba(124,58,237,.32), rgba(124,58,237,.20)); color:var(--fg); cursor:pointer; font-weight:650;
     }
-    .btn:hover{background:rgba(0,255,102,.16); border-color:rgba(0,255,102,.55);}
+    .btn:hover{filter:brightness(1.06);}
     .kpi{display:grid; grid-template-columns: 1fr 1fr; gap:10px;}
-    .k{background:rgba(0,255,102,.06); border:1px solid rgba(0,255,102,.20); border-radius:14px; padding:10px 12px;}
-    .k .l{color:var(--muted); font-size:12px;}
-    .k .v{font-size:18px; font-weight:700; margin-top:4px;}
-    .err{border:1px solid rgba(255,90,90,.35); background:rgba(255,90,90,.08); padding:10px 12px; border-radius:12px;}
-    .ok{border:1px solid rgba(0,255,102,.25); background:rgba(0,255,102,.06); padding:10px 12px; border-radius:12px;}
-    .hint{color:var(--muted); font-size:12px; margin-top:10px;}
+    .k{background:var(--panel2); border:1px solid var(--border); border-radius:14px; padding:10px 12px;}
+    .k .l{color:var(--muted2); font-size:12px;}
+    .k .v{font-size:18px; font-weight:750; margin-top:4px; letter-spacing:-0.2px;}
+    .err{border:1px solid rgba(255,90,90,.42); background:rgba(255,90,90,.10); padding:10px 12px; border-radius:12px;}
+    .ok{border:1px solid rgba(34,197,94,.35); background:rgba(34,197,94,.10); padding:10px 12px; border-radius:12px;}
+    .hint{color:var(--muted2); font-size:12px; margin-top:10px;}
     .small{color:var(--muted); font-size:12px;}
-    a{color:var(--accent);}
+    a{color:rgba(167,139,250,.95);}
 
     .table-wrap{width:100%; overflow:auto; margin-top:10px; border-radius:14px; border:1px solid rgba(0,255,102,.12);}
     table{width:100%; min-width:720px; border-collapse:collapse;}
@@ -245,8 +277,8 @@ HTML = """
     tbody td{padding:12px 10px; border-bottom:1px solid rgba(0,255,102,.10);}
     tbody tr:hover{background:rgba(0,255,102,.05);}
     .mono{font-variant-numeric: tabular-nums;}
-    .pill{display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid rgba(0,255,102,.25);
-      background:rgba(0,255,102,.06); color:var(--fg); font-size:12px;}
+    .pill{display:inline-block; padding:3px 10px; border-radius:999px; border:1px solid var(--border);
+      background:rgba(255,255,255,.05); color:var(--fg); font-size:12px;}
 
     .switch-row{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;}
     .switch-row .txt{display:flex; flex-direction:column; gap:2px;}
@@ -256,13 +288,16 @@ HTML = """
     .switch{position:relative; display:inline-block; width:44px; height:26px; flex:0 0 auto;}
     .switch input{opacity:0; width:0; height:0;}
     .slider{position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0;
-      background:rgba(255,255,255,.08); border:1px solid rgba(0,255,102,.25); transition:.2s; border-radius:999px;
+      background:rgba(255,255,255,.10); border:1px solid var(--border); transition:.2s; border-radius:999px;
     }
     .slider:before{position:absolute; content:""; height:20px; width:20px; left:3px; top:2px;
       background:rgba(215,255,224,.9); transition:.2s; border-radius:999px;
     }
-    .switch input:checked + .slider{background:rgba(0,255,102,.18);}
-    .switch input:checked + .slider:before{transform:translateX(18px); background:rgba(0,255,102,.95);}
+    .switch input:checked + .slider{background:rgba(34,197,94,.22);}
+    .switch input:checked + .slider:before{transform:translateX(18px); background:rgba(34,197,94,.95);}
+
+    details{border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.03); padding:10px 12px; margin-top:12px;}
+    summary{cursor:pointer; color:var(--muted); font-size:12px; font-weight:700;}
 
     @media (max-width: 920px){
       .grid{grid-template-columns: 1fr;}
@@ -272,8 +307,8 @@ HTML = """
 </head>
 <body>
   <div class="wrap">
-    <h1>Volumen por Dataset (Análisis Numérico)</h1>
-    <p class="sub">Sube una imagen (objeto + regla de 30 cm) para generar `z_cm,r_cm`, guardar en `collected.csv` y calcular el volumen.</p>
+    <h1>Image-to-Volume</h1>
+    <p class="sub">Sube una imagen con el objeto y una regla de 30 cm para extraer el perfil `r(z)`, guardarlo en `collected.csv` y estimar el volumen por integración numérica.</p>
 
     {% if message %}
       <div class="{{ 'err' if is_error else 'ok' }}">{{ message }}</div>
@@ -289,45 +324,61 @@ HTML = """
           <label>Paso de muestreo (cm)</label>
           <input name="step_cm" type="number" step="0.1" value="1.0" />
 
-          <div class="section-title" style="margin-top:14px;">Ajustes numéricos</div>
-          <label>Método de integración</label>
-          <select name="method">
-            <option value="trapezoidal">trapezoidal</option>
-            <option value="simpson">simpson</option>
-          </select>
+          <details open>
+            <summary>Ajustes numéricos</summary>
+            <label style="margin-top:10px;">Método de integración</label>
+            <select name="method">
+              <option value="trapezoidal">trapezoidal</option>
+              <option value="simpson">simpson</option>
+            </select>
 
-          <div class="switch-row">
-            <div class="txt">
-              <div class="t">Remuestrear a malla uniforme</div>
-              <div class="d">Recomendado para Simpson si tus z no están uniformes.</div>
+            <div class="switch-row">
+              <div class="txt">
+                <div class="t">Remuestrear a malla uniforme</div>
+                <div class="d">Recomendado para Simpson si tus z no están uniformes.</div>
+              </div>
+              <label class="switch" aria-label="remuestrear">
+                <input type="checkbox" name="resample" value="yes" />
+                <span class="slider"></span>
+              </label>
             </div>
-            <label class="switch" aria-label="remuestrear">
-              <input type="checkbox" name="resample" value="yes" />
-              <span class="slider"></span>
-            </label>
-          </div>
 
-          <label>Paso Δz (si remuestreas)</label>
-          <input name="step" type="number" step="0.01" value="1.0" />
+            <label>Paso Δz (si remuestreas)</label>
+            <input name="step" type="number" step="0.01" value="1.0" />
+          </details>
 
-          <div class="switch-row">
-            <div class="txt">
-              <div class="t">Usar Gemini como fallback</div>
-              <div class="d">Solo si falla la detección local. Requiere `GEMINI_API_KEY` y `GEMINI_ENABLE_CALLS=1`.</div>
+          <details>
+            <summary>Opciones avanzadas</summary>
+            <div class="switch-row">
+              <div class="txt">
+                <div class="t">Usar Gemini como fallback</div>
+                <div class="d">Solo si falla la detección local. Requiere `GEMINI_API_KEY` y `GEMINI_ENABLE_CALLS=1`.</div>
+              </div>
+              <label class="switch" aria-label="gemini-fallback">
+                <input type="checkbox" name="gemini_fallback" value="yes" />
+                <span class="slider"></span>
+              </label>
             </div>
-            <label class="switch" aria-label="gemini-fallback">
-              <input type="checkbox" name="gemini_fallback" value="yes" />
-              <span class="slider"></span>
-            </label>
-          </div>
+
+            <div class="switch-row">
+              <div class="txt">
+                <div class="t">Guardar artefactos de debug</div>
+                <div class="d">Guarda imagen, máscara y overlay para bug fixing.</div>
+              </div>
+              <label class="switch" aria-label="save-debug">
+                <input type="checkbox" name="save_debug" value="yes" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </details>
 
           <button class="btn" type="submit">Extraer perfil → Guardar → Calcular</button>
           <div class="hint">Asegúrate que la regla de 30 cm se vea completa y esté en el mismo plano que el objeto.</div>
         </form>
 
-        <div style="margin-top:14px; border-top:1px solid rgba(0,255,102,.12); padding-top:14px;">
-          <div class="section-title">Alternativa</div>
-          <div class="small">Si ya tienes un CSV, puedes usar el modo CSV.</div>
+        <details style="margin-top:14px;">
+          <summary>Alternativa: calcular con CSV</summary>
+          <div class="small" style="margin-top:8px;">Si ya tienes un CSV, úsalo aquí.</div>
           <form method="post" action="{{ url_for('compute_csv') }}" enctype="multipart/form-data" style="margin-top:10px;">
             <label>Dataset CSV</label>
             <input type="file" name="file" accept=".csv" required />
@@ -371,7 +422,7 @@ HTML = """
 
             <button class="btn" type="submit">Calcular con CSV</button>
           </form>
-        </div>
+        </details>
       </div>
 
       <div class="card">
@@ -385,11 +436,40 @@ HTML = """
             <div class="k"><div class="l">n puntos</div><div class="v">{{ result.n }}</div></div>
           </div>
           <p class="small" style="margin-top:10px;">Unidades: cm³ si `z` está en cm y `A` en cm².</p>
+
+          {% if debug_zip_url %}
+            <p class="small" style="margin-top:10px;">Debug: <a href="{{ debug_zip_url }}">descargar artefactos (.zip)</a></p>
+          {% endif %}
         {% else %}
           <p class="small">Sube un CSV y calcula para ver resultados aquí.</p>
         {% endif %}
       </div>
     </div>
+
+    {% if integrand_rows %}
+      <div class="card" style="margin-top:14px;">
+        <h2 style="font-size:14px; margin:0 0 10px; color:var(--muted);">¿Qué se integró?</h2>
+        <div class="small">Mostrando z y A(z)=πr(z)² ya preparados (incluye remuestreo si aplicó).</div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="mono" style="min-width:560px;">
+            <thead>
+              <tr>
+                <th>z (cm)</th>
+                <th>A(z) (cm²)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in integrand_rows %}
+                <tr>
+                  <td>{{ '%.6f'|format(row[0]) }}</td>
+                  <td>{{ '%.6f'|format(row[1]) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
 
     <div class="card" style="margin-top:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -454,6 +534,18 @@ def create_app() -> Flask:
     datasets_dir.mkdir(exist_ok=True)
     collected_path = datasets_dir / "collected.csv"
 
+    debug_dir = Path(__file__).resolve().parent / "debug_runs"
+    debug_dir.mkdir(exist_ok=True)
+
+    def _zip_dir(path: Path) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for p in path.rglob("*"):
+                if p.is_dir():
+                    continue
+                zf.write(p, arcname=str(p.relative_to(path)))
+        return buf.getvalue()
+
     @app.get("/")
     def index() -> str:
         return render_template_string(
@@ -463,6 +555,21 @@ def create_app() -> Flask:
             y_mode=None,
             message=None,
             is_error=False,
+            debug_zip_url=None,
+            integrand_rows=None,
+        )
+
+    @app.get("/debug/<run_id>.zip")
+    def download_debug(run_id: str) -> Response:
+        safe = "".join([c for c in run_id if c.isalnum() or c in ("-", "_")])
+        path = debug_dir / safe
+        if not path.exists() or not path.is_dir():
+            return Response("Not found", status=404)
+        data = _zip_dir(path)
+        return Response(
+            data,
+            mimetype="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=debug_{safe}.zip"},
         )
 
     @app.post("/compute/csv")
@@ -475,6 +582,8 @@ def create_app() -> Flask:
                 y_mode=None,
                 message="Falta archivo.",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         f = request.files["file"]
@@ -486,6 +595,8 @@ def create_app() -> Flask:
                 y_mode=None,
                 message="Archivo inválido.",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         try:
@@ -498,6 +609,8 @@ def create_app() -> Flask:
                 y_mode=None,
                 message=f"No se pudo leer CSV: {e}",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         col_z = request.form.get("col_z", "z_cm")
@@ -510,6 +623,8 @@ def create_app() -> Flask:
                 y_mode=None,
                 message=f"Columnas no encontradas. Disponibles: {', '.join(df.columns)}",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         y_mode = request.form.get("y_mode", "area")
@@ -531,6 +646,8 @@ def create_app() -> Flask:
                 y_mode=y_mode,
                 message=f"No se pudo preparar la tabla: {e}",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         try:
@@ -553,6 +670,8 @@ def create_app() -> Flask:
                 y_mode=y_mode,
                 message=str(e),
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         return render_template_string(
@@ -562,6 +681,8 @@ def create_app() -> Flask:
             y_mode=y_mode,
             message="Cálculo completado.",
             is_error=False,
+            debug_zip_url=None,
+            integrand_rows=(list(zip(result.z_used, result.A_used))[:200] if result.z_used and result.A_used else None),
         )
 
     @app.post("/compute/image")
@@ -574,6 +695,8 @@ def create_app() -> Flask:
                 y_mode="radius",
                 message="Falta imagen.",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         f = request.files["image"]
@@ -585,6 +708,8 @@ def create_app() -> Flask:
                 y_mode="radius",
                 message="Imagen inválida.",
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
 
         try:
@@ -596,9 +721,18 @@ def create_app() -> Flask:
         resample = request.form.get("resample") == "yes"
         step = float(request.form.get("step", "1.0"))
         allow_gemini_fallback = request.form.get("gemini_fallback") == "yes"
+        save_debug = request.form.get("save_debug") == "yes"
+
+        image_bytes = f.read()
+        run_id = uuid.uuid4().hex[:12]
+        run_path = debug_dir / run_id
 
         try:
-            pr = profile_from_image_bytes(f.read(), step_cm=step_cm, allow_gemini_fallback=allow_gemini_fallback)
+            if save_debug:
+                pr, dbg = profile_from_image_bytes_with_debug(image_bytes, step_cm=step_cm, allow_gemini_fallback=allow_gemini_fallback)
+            else:
+                pr = profile_from_image_bytes(image_bytes, step_cm=step_cm, allow_gemini_fallback=allow_gemini_fallback)
+                dbg = None
         except Exception as e:
             return render_template_string(
                 HTML,
@@ -607,7 +741,35 @@ def create_app() -> Flask:
                 y_mode="radius",
                 message=str(e),
                 is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
             )
+
+        debug_zip_url = None
+        if save_debug and dbg is not None:
+            run_path.mkdir(parents=True, exist_ok=True)
+            (run_path / "meta.json").write_text(
+                json.dumps(
+                    {
+                        "step_cm": float(step_cm),
+                        "method": str(method),
+                        "resample": bool(resample),
+                        "step": float(step),
+                        "allow_gemini_fallback": bool(allow_gemini_fallback),
+                        "px_per_cm": float(pr.px_per_cm),
+                        "px_per_cm_source": str(dbg.px_per_cm_source),
+                        "ruler_line": list(dbg.ruler_line) if dbg.ruler_line is not None else None,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            (run_path / "input.jpg").write_bytes(image_bytes)
+            cv2.imwrite(str(run_path / "mask.png"), (dbg.mask * 255).astype(np.uint8))
+            cv2.imwrite(str(run_path / "overlay.png"), dbg.overlay_bgr)
+            pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)}).to_csv(run_path / "profile.csv", index=False)
+            debug_zip_url = url_for("download_debug", run_id=run_id)
 
         df_new = pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)})
         df_new = df_new.sort_values("z_cm").reset_index(drop=True)
@@ -632,6 +794,8 @@ def create_app() -> Flask:
                 y_mode="radius",
                 message=str(e),
                 is_error=True,
+                debug_zip_url=debug_zip_url,
+                integrand_rows=None,
             )
 
         return render_template_string(
@@ -641,6 +805,8 @@ def create_app() -> Flask:
             y_mode="radius",
             message=f"Perfil extraído y guardado en {collected_path.name}.",
             is_error=False,
+            debug_zip_url=debug_zip_url,
+            integrand_rows=(list(zip(result.z_used, result.A_used))[:200] if result.z_used and result.A_used else None),
         )
 
     @app.get("/examples/<name>")
@@ -676,4 +842,4 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(host="127.0.0.1", port=8000, debug=True)
+    app.run(host="127.0.0.1", port=8002, debug=True)

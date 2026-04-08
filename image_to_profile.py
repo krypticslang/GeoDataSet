@@ -15,6 +15,14 @@ class ProfileResult:
     px_per_cm: float
 
 
+@dataclass(frozen=True)
+class ProfileDebug:
+    mask: np.ndarray
+    overlay_bgr: np.ndarray
+    ruler_line: tuple[int, int, int, int] | None
+    px_per_cm_source: str
+
+
 def _largest_connected_component(mask: np.ndarray) -> np.ndarray:
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
     if num_labels <= 1:
@@ -55,6 +63,39 @@ def _estimate_px_per_cm_from_ruler(img_bgr: np.ndarray) -> float:
         raise ValueError("Escala inválida: muy pocos pixeles por cm. Acerca más la cámara o usa mayor resolución.")
 
     return float(px_per_cm)
+
+
+def _estimate_px_per_cm_from_ruler_debug(img_bgr: np.ndarray) -> tuple[float, tuple[int, int, int, int]]:
+    h, w = img_bgr.shape[:2]
+
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    edges = cv2.Canny(gray, 50, 150)
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=80, minLineLength=int(0.35 * max(h, w)), maxLineGap=15)
+    if lines is None:
+        raise ValueError("No se pudo detectar la regla (líneas). Asegúrate que la regla de 30cm se vea completa y nítida.")
+
+    best_len = 0.0
+    best: tuple[int, int, int, int] | None = None
+    for x1, y1, x2, y2 in lines[:, 0, :]:
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
+        length = float(np.hypot(dx, dy))
+        if length > best_len:
+            best_len = length
+            best = (int(x1), int(y1), int(x2), int(y2))
+
+    if best is None or best_len <= 0:
+        raise ValueError("No se pudo estimar la longitud de la regla.")
+
+    px_per_cm = best_len / 30.0
+    if px_per_cm < 2.0:
+        raise ValueError("Escala inválida: muy pocos pixeles por cm. Acerca más la cámara o usa mayor resolución.")
+
+    return float(px_per_cm), best
 
 
 def _estimate_px_per_cm_from_gemini(image_bytes: bytes) -> float:
@@ -111,6 +152,16 @@ def profile_from_image_bytes(
     step_cm: float = 1.0,
     allow_gemini_fallback: bool = False,
 ) -> ProfileResult:
+    pr, _dbg = profile_from_image_bytes_with_debug(image_bytes, step_cm=step_cm, allow_gemini_fallback=allow_gemini_fallback)
+    return pr
+
+
+def profile_from_image_bytes_with_debug(
+    image_bytes: bytes,
+    *,
+    step_cm: float = 1.0,
+    allow_gemini_fallback: bool = False,
+) -> tuple[ProfileResult, ProfileDebug]:
     if step_cm <= 0:
         raise ValueError("step_cm debe ser > 0")
 
@@ -119,12 +170,32 @@ def profile_from_image_bytes(
     if img is None:
         raise ValueError("No se pudo leer la imagen")
 
+    ruler_line: tuple[int, int, int, int] | None = None
+    px_per_cm_source = "local"
     try:
-        px_per_cm = _estimate_px_per_cm_from_ruler(img)
+        px_per_cm, ruler_line = _estimate_px_per_cm_from_ruler_debug(img)
     except Exception as e:
         if not allow_gemini_fallback:
             raise e
-        px_per_cm = _estimate_px_per_cm_from_gemini(image_bytes)
+        px_per_cm_source = "gemini"
+        resp = ruler_endpoints_from_image_bytes(image_bytes)
+        if not resp.ok or not resp.data:
+            raise ValueError(resp.message)
+        try:
+            p1 = resp.data["ruler"]["p1"]
+            p2 = resp.data["ruler"]["p2"]
+            x1, y1 = int(p1["x"]), int(p1["y"])
+            x2, y2 = int(p2["x"]), int(p2["y"])
+            ruler_line = (x1, y1, x2, y2)
+        except Exception:
+            raise ValueError("Gemini devolvió JSON inválido para puntos de la regla")
+        length_px = float(np.hypot(float(ruler_line[2] - ruler_line[0]), float(ruler_line[3] - ruler_line[1])))
+        if length_px <= 0:
+            raise ValueError("Gemini devolvió una longitud de regla inválida")
+        px_per_cm = float(length_px / 30.0)
+        if px_per_cm < 2.0:
+            raise ValueError("Escala inválida (Gemini): muy pocos pixeles por cm")
+
     mask = _segment_object_mask(img)
 
     ys, xs = np.where(mask > 0)
@@ -160,4 +231,14 @@ def profile_from_image_bytes(
     z_cm = z_cm[good]
     r_cm = r_cm[good]
 
-    return ProfileResult(z_cm=z_cm, r_cm=r_cm, px_per_cm=float(px_per_cm))
+    overlay = img.copy()
+    contours, _ = cv2.findContours((mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) > 0:
+        cv2.drawContours(overlay, contours, -1, (0, 255, 0), 2)
+    if ruler_line is not None:
+        x1, y1, x2, y2 = ruler_line
+        cv2.line(overlay, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+
+    pr = ProfileResult(z_cm=z_cm, r_cm=r_cm, px_per_cm=float(px_per_cm))
+    dbg = ProfileDebug(mask=mask.astype(np.uint8), overlay_bgr=overlay, ruler_line=ruler_line, px_per_cm_source=px_per_cm_source)
+    return pr, dbg
