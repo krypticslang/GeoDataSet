@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 import uuid
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from flask import Flask, Response, render_template_string, request, url_for
+
+from image_to_profile import profile_from_image_bytes
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,12 @@ class TableRow:
     z: float
     r: float | None
     A: float
+
+
+@dataclass(frozen=True)
+class ProfileRow:
+    z: float
+    r: float
 
 
 def composite_trapezoidal(x: np.ndarray, f: np.ndarray) -> float:
@@ -142,6 +151,25 @@ def compute_from_df(
     return ComputeResult(volume=float(V), z_min=float(z[0]), z_max=float(z[-1]), n=int(z.size), method=method)
 
 
+def volume_from_profile(z_cm: np.ndarray, r_cm: np.ndarray, *, method: str, resample: bool, step: float) -> ComputeResult:
+    z = z_cm.astype(float)
+    r = r_cm.astype(float)
+    order = np.argsort(z)
+    z = z[order]
+    r = r[order]
+
+    A = np.pi * (r**2)
+    if resample:
+        z, A = resample_uniform(z, A, step=float(step))
+
+    if method == "trapezoidal":
+        V = composite_trapezoidal(z, A)
+    else:
+        V = composite_simpson_uniform(z, A)
+
+    return ComputeResult(volume=float(V), z_min=float(z[0]), z_max=float(z[-1]), n=int(z.size), method=method)
+
+
 def table_rows_from_df(
     df: pd.DataFrame,
     *,
@@ -245,7 +273,7 @@ HTML = """
 <body>
   <div class="wrap">
     <h1>Volumen por Dataset (Análisis Numérico)</h1>
-    <p class="sub">Sube un CSV y calcula V ≈ ∫A(z)dz con Trapecio o Simpson.</p>
+    <p class="sub">Sube una imagen (objeto + regla de 30 cm) para generar `z_cm,r_cm`, guardar en `collected.csv` y calcular el volumen.</p>
 
     {% if message %}
       <div class="{{ 'err' if is_error else 'ok' }}">{{ message }}</div>
@@ -253,27 +281,13 @@ HTML = """
 
     <div class="grid">
       <div class="card">
-        <form method="post" action="{{ url_for('compute') }}" enctype="multipart/form-data">
+        <form method="post" action="{{ url_for('compute_image') }}" enctype="multipart/form-data">
           <div class="section-title">Entrada</div>
-          <label>Dataset CSV</label>
-          <input type="file" name="file" accept=".csv" required />
+          <label>Imagen (objeto + regla de 30 cm)</label>
+          <input type="file" name="image" accept="image/*" required />
 
-          <div class="row">
-            <div>
-              <label>Columna z</label>
-              <input name="col_z" placeholder="z_cm" value="z_cm" />
-            </div>
-            <div>
-              <label>Columna y</label>
-              <input name="col_y" placeholder="A_cm2 o r_cm" value="A_cm2" />
-            </div>
-          </div>
-
-          <label>Qué representa y</label>
-          <select name="y_mode">
-            <option value="area">área A(z)</option>
-            <option value="radius">radio r(z) (A=πr²)</option>
-          </select>
+          <label>Paso de muestreo (cm)</label>
+          <input name="step_cm" type="number" step="0.1" value="1.0" />
 
           <div class="section-title" style="margin-top:14px;">Ajustes numéricos</div>
           <label>Método de integración</label>
@@ -296,19 +310,57 @@ HTML = """
           <label>Paso Δz (si remuestreas)</label>
           <input name="step" type="number" step="0.01" value="1.0" />
 
-          <label>Interpolación (opcional)</label>
-          <select name="interpolation">
-            <option value="none">none</option>
-            <option value="newton">newton</option>
-            <option value="lagrange">lagrange</option>
-          </select>
-
-          <label>N puntos (si interpolas)</label>
-          <input name="interp_n" type="number" value="0" />
-
-          <button class="btn" type="submit">Calcular volumen</button>
-          <div class="hint">Consejo: si usas Simpson, mide con Δz constante (por ejemplo cada 1 cm).</div>
+          <button class="btn" type="submit">Extraer perfil → Guardar → Calcular</button>
+          <div class="hint">Asegúrate que la regla de 30 cm se vea completa y esté en el mismo plano que el objeto.</div>
         </form>
+
+        <div style="margin-top:14px; border-top:1px solid rgba(0,255,102,.12); padding-top:14px;">
+          <div class="section-title">Alternativa</div>
+          <div class="small">Si ya tienes un CSV, puedes usar el modo CSV.</div>
+          <form method="post" action="{{ url_for('compute_csv') }}" enctype="multipart/form-data" style="margin-top:10px;">
+            <label>Dataset CSV</label>
+            <input type="file" name="file" accept=".csv" required />
+
+            <div class="row">
+              <div>
+                <label>Columna z</label>
+                <input name="col_z" placeholder="z_cm" value="z_cm" />
+              </div>
+              <div>
+                <label>Columna y</label>
+                <input name="col_y" placeholder="A_cm2 o r_cm" value="r_cm" />
+              </div>
+            </div>
+
+            <label>Qué representa y</label>
+            <select name="y_mode">
+              <option value="radius">radio r(z) (A=πr²)</option>
+              <option value="area">área A(z)</option>
+            </select>
+
+            <label>Método de integración</label>
+            <select name="method">
+              <option value="trapezoidal">trapezoidal</option>
+              <option value="simpson">simpson</option>
+            </select>
+
+            <div class="switch-row">
+              <div class="txt">
+                <div class="t">Remuestrear a malla uniforme</div>
+                <div class="d">Recomendado para Simpson si tus z no están uniformes.</div>
+              </div>
+              <label class="switch" aria-label="remuestrear">
+                <input type="checkbox" name="resample" value="yes" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <label>Paso Δz (si remuestreas)</label>
+            <input name="step" type="number" step="0.01" value="1.0" />
+
+            <button class="btn" type="submit">Calcular con CSV</button>
+          </form>
+        </div>
       </div>
 
       <div class="card">
@@ -373,9 +425,9 @@ HTML = """
 
     <p class="small" style="margin-top:16px;">
       Archivos de ejemplo:
-      <a href="{{ url_for('download_example', name='exact_A_z2.csv') }}">exact_A_z2.csv</a>
-      · <a href="{{ url_for('download_example', name='example_A.csv') }}">example_A.csv</a>
+      <a href="{{ url_for('download_example', name='example_A.csv') }}">example_A.csv</a>
       · <a href="{{ url_for('download_example', name='example_r.csv') }}">example_r.csv</a>
+      · <a href="{{ url_for('download_collected') }}">collected.csv</a>
     </p>
   </div>
 </body>
@@ -386,6 +438,10 @@ HTML = """
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = uuid.uuid4().hex
+
+    datasets_dir = Path(__file__).resolve().parent / "datasets"
+    datasets_dir.mkdir(exist_ok=True)
+    collected_path = datasets_dir / "collected.csv"
 
     @app.get("/")
     def index() -> str:
@@ -398,8 +454,8 @@ def create_app() -> Flask:
             is_error=False,
         )
 
-    @app.post("/compute")
-    def compute() -> str:
+    @app.post("/compute/csv")
+    def compute_csv() -> str:
         if "file" not in request.files:
             return render_template_string(
                 HTML,
@@ -497,9 +553,87 @@ def create_app() -> Flask:
             is_error=False,
         )
 
+    @app.post("/compute/image")
+    def compute_image() -> str:
+        if "image" not in request.files:
+            return render_template_string(
+                HTML,
+                result=None,
+                rows=None,
+                y_mode="radius",
+                message="Falta imagen.",
+                is_error=True,
+            )
+
+        f = request.files["image"]
+        if not f.filename:
+            return render_template_string(
+                HTML,
+                result=None,
+                rows=None,
+                y_mode="radius",
+                message="Imagen inválida.",
+                is_error=True,
+            )
+
+        try:
+            step_cm = float(request.form.get("step_cm", "1.0"))
+        except Exception:
+            step_cm = 1.0
+
+        method = request.form.get("method", "trapezoidal")
+        resample = request.form.get("resample") == "yes"
+        step = float(request.form.get("step", "1.0"))
+
+        try:
+            pr = profile_from_image_bytes(f.read(), step_cm=step_cm)
+        except Exception as e:
+            return render_template_string(
+                HTML,
+                result=None,
+                rows=None,
+                y_mode="radius",
+                message=str(e),
+                is_error=True,
+            )
+
+        df_new = pd.DataFrame({"z_cm": pr.z_cm.astype(float), "r_cm": pr.r_cm.astype(float)})
+        df_new = df_new.sort_values("z_cm").reset_index(drop=True)
+
+        if collected_path.exists():
+            df_all = pd.read_csv(collected_path)
+            df_all = pd.concat([df_all, df_new], ignore_index=True)
+        else:
+            df_all = df_new
+        df_all.to_csv(collected_path, index=False)
+
+        rows_profile = [ProfileRow(z=float(z), r=float(r)) for z, r in zip(df_new["z_cm"], df_new["r_cm"])]
+        rows_table = [TableRow(z=row.z, r=row.r, A=float(np.pi * (row.r**2))) for row in rows_profile]
+
+        try:
+            result = volume_from_profile(df_new["z_cm"].to_numpy(), df_new["r_cm"].to_numpy(), method=method, resample=resample, step=step)
+        except Exception as e:
+            return render_template_string(
+                HTML,
+                result=None,
+                rows=rows_table,
+                y_mode="radius",
+                message=str(e),
+                is_error=True,
+            )
+
+        return render_template_string(
+            HTML,
+            result=result,
+            rows=rows_table,
+            y_mode="radius",
+            message=f"Perfil extraído y guardado en {collected_path.name}.",
+            is_error=False,
+        )
+
     @app.get("/examples/<name>")
     def download_example(name: str) -> Response:
-        allowed = {"exact_A_z2.csv", "example_A.csv", "example_r.csv"}
+        allowed = {"example_A.csv", "example_r.csv"}
         if name not in allowed:
             return Response("Not found", status=404)
 
@@ -511,6 +645,18 @@ def create_app() -> Flask:
             data,
             mimetype="text/csv",
             headers={"Content-Disposition": f"attachment; filename={name}"},
+        )
+
+    @app.get("/collected.csv")
+    def download_collected() -> Response:
+        if not collected_path.exists():
+            data = b"z_cm,r_cm\n"
+        else:
+            data = collected_path.read_bytes()
+        return Response(
+            data,
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=collected.csv"},
         )
 
     return app
