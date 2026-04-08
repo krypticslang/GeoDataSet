@@ -1157,6 +1157,26 @@ def create_app() -> Flask:
         save_debug = request.form.get("save_debug") == "yes"
 
         image_bytes = f.read()
+        if not image_bytes:
+            return render_template_string(
+                HTML,
+                result=None,
+                rows=None,
+                y_mode="radius",
+                message="La imagen se recibió vacía. Vuelve a seleccionarla y reintenta.",
+                is_error=True,
+                debug_zip_url=None,
+                integrand_rows=None,
+                component_choices=None,
+                run_id=None,
+                step_cm=None,
+                method=None,
+                resample=None,
+                step=None,
+                gemini_fallback=None,
+                save_debug=None,
+                view_assets=None,
+            )
         run_id = uuid.uuid4().hex[:12]
         run_path = debug_dir / run_id
 
@@ -1225,9 +1245,7 @@ def create_app() -> Flask:
             if len(infos) >= 2:
                 component_choices = []
                 for info, cmask in zip(infos, masks):
-                    overlay = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-                    if overlay is None:
-                        overlay = dbg.overlay_bgr.copy()
+                    overlay = dbg.overlay_bgr.copy()
                     contours, _ = cv2.findContours((cmask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if len(contours) > 0:
                         cv2.drawContours(overlay, contours, -1, (0, 255, 0), 3)
