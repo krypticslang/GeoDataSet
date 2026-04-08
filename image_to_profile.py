@@ -52,15 +52,32 @@ def _estimate_px_per_cm_from_ruler(img_bgr: np.ndarray) -> float:
     if lines is None:
         raise ValueError("No se pudo detectar la regla (líneas). Asegúrate que la regla de 30cm se vea completa y nítida.")
 
+    ang_thr = float(np.deg2rad(20.0))
     best_len = 0.0
     best = None
+    best_any_len = 0.0
+    best_any = None
     for x1, y1, x2, y2 in lines[:, 0, :]:
         dx = float(x2 - x1)
         dy = float(y2 - y1)
         length = float(np.hypot(dx, dy))
+        if length > best_any_len:
+            best_any_len = length
+            best_any = (x1, y1, x2, y2)
+
+        ang = float(np.arctan2(dy, dx))
+        ang = float((ang + np.pi) % (2.0 * np.pi) - np.pi)
+        horiz_dev = float(min(abs(ang), abs(np.pi - abs(ang))))
+        vert_dev = float(abs(abs(ang) - (0.5 * np.pi)))
+        if min(horiz_dev, vert_dev) > ang_thr:
+            continue
         if length > best_len:
             best_len = length
             best = (x1, y1, x2, y2)
+
+    if best is None:
+        best = best_any
+        best_len = best_any_len
 
     if best is None or best_len <= 0:
         raise ValueError("No se pudo estimar la longitud de la regla.")
@@ -68,6 +85,12 @@ def _estimate_px_per_cm_from_ruler(img_bgr: np.ndarray) -> float:
     px_per_cm = best_len / 30.0
     if px_per_cm < 2.0:
         raise ValueError("Escala inválida: muy pocos pixeles por cm. Acerca más la cámara o usa mayor resolución.")
+
+    if (float(w) / float(px_per_cm)) > 120.0 or (float(h) / float(px_per_cm)) > 120.0:
+        raise ValueError(
+            "Escala inválida: la regla detectada es demasiado corta (px/cm muy pequeño). "
+            "Asegúrate de que la regla de 30 cm se vea completa o habilita Gemini como fallback."
+        )
 
     return float(px_per_cm)
 
@@ -85,15 +108,32 @@ def _estimate_px_per_cm_from_ruler_debug(img_bgr: np.ndarray) -> tuple[float, tu
     if lines is None:
         raise ValueError("No se pudo detectar la regla (líneas). Asegúrate que la regla de 30cm se vea completa y nítida.")
 
+    ang_thr = float(np.deg2rad(20.0))
     best_len = 0.0
     best: tuple[int, int, int, int] | None = None
+    best_any_len = 0.0
+    best_any: tuple[int, int, int, int] | None = None
     for x1, y1, x2, y2 in lines[:, 0, :]:
         dx = float(x2 - x1)
         dy = float(y2 - y1)
         length = float(np.hypot(dx, dy))
+        if length > best_any_len:
+            best_any_len = length
+            best_any = (int(x1), int(y1), int(x2), int(y2))
+
+        ang = float(np.arctan2(dy, dx))
+        ang = float((ang + np.pi) % (2.0 * np.pi) - np.pi)
+        horiz_dev = float(min(abs(ang), abs(np.pi - abs(ang))))
+        vert_dev = float(abs(abs(ang) - (0.5 * np.pi)))
+        if min(horiz_dev, vert_dev) > ang_thr:
+            continue
         if length > best_len:
             best_len = length
             best = (int(x1), int(y1), int(x2), int(y2))
+
+    if best is None:
+        best = best_any
+        best_len = best_any_len
 
     if best is None or best_len <= 0:
         raise ValueError("No se pudo estimar la longitud de la regla.")
@@ -101,6 +141,12 @@ def _estimate_px_per_cm_from_ruler_debug(img_bgr: np.ndarray) -> tuple[float, tu
     px_per_cm = best_len / 30.0
     if px_per_cm < 2.0:
         raise ValueError("Escala inválida: muy pocos pixeles por cm. Acerca más la cámara o usa mayor resolución.")
+
+    if (float(w) / float(px_per_cm)) > 120.0 or (float(h) / float(px_per_cm)) > 120.0:
+        raise ValueError(
+            "Escala inválida: la regla detectada es demasiado corta (px/cm muy pequeño). "
+            "Asegúrate de que la regla de 30 cm se vea completa o habilita Gemini como fallback."
+        )
 
     return float(px_per_cm), best
 
