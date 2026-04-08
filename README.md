@@ -60,13 +60,21 @@ Abre en el navegador:
 
 ## API Key (Gemini) (opcional)
 
-El proyecto está listo para integrar Gemini como fallback, pero **si no configuras la key**, el sistema funciona solo con el pipeline local.
+El proyecto está listo para integrar Gemini como fallback, pero por seguridad **NO hace llamadas** por defecto.
 
 Cuando tengas la key:
 
 ```bash
 export GEMINI_API_KEY="TU_KEY"
 ```
+
+Para habilitar llamadas (solo cuando tú lo decidas):
+
+```bash
+export GEMINI_ENABLE_CALLS=1
+```
+
+Luego, en el front, activa el switch **"Usar Gemini como fallback"**.
 
 ## Modo CLI (por dataset)
 

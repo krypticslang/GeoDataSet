@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from gemini_api import ruler_endpoints_from_image_bytes
+
 
 @dataclass(frozen=True)
 class ProfileResult:
@@ -55,6 +57,28 @@ def _estimate_px_per_cm_from_ruler(img_bgr: np.ndarray) -> float:
     return float(px_per_cm)
 
 
+def _estimate_px_per_cm_from_gemini(image_bytes: bytes) -> float:
+    resp = ruler_endpoints_from_image_bytes(image_bytes)
+    if not resp.ok or not resp.data:
+        raise ValueError(resp.message)
+
+    try:
+        p1 = resp.data["ruler"]["p1"]
+        p2 = resp.data["ruler"]["p2"]
+        x1, y1 = float(p1["x"]), float(p1["y"])
+        x2, y2 = float(p2["x"]), float(p2["y"])
+    except Exception:
+        raise ValueError("Gemini devolvió JSON inválido para puntos de la regla")
+
+    length_px = float(np.hypot(x2 - x1, y2 - y1))
+    if length_px <= 0:
+        raise ValueError("Gemini devolvió una longitud de regla inválida")
+    px_per_cm = length_px / 30.0
+    if px_per_cm < 2.0:
+        raise ValueError("Escala inválida (Gemini): muy pocos pixeles por cm")
+    return float(px_per_cm)
+
+
 def _segment_object_mask(img_bgr: np.ndarray) -> np.ndarray:
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
     l = lab[:, :, 0]
@@ -85,6 +109,7 @@ def profile_from_image_bytes(
     image_bytes: bytes,
     *,
     step_cm: float = 1.0,
+    allow_gemini_fallback: bool = False,
 ) -> ProfileResult:
     if step_cm <= 0:
         raise ValueError("step_cm debe ser > 0")
@@ -94,7 +119,12 @@ def profile_from_image_bytes(
     if img is None:
         raise ValueError("No se pudo leer la imagen")
 
-    px_per_cm = _estimate_px_per_cm_from_ruler(img)
+    try:
+        px_per_cm = _estimate_px_per_cm_from_ruler(img)
+    except Exception as e:
+        if not allow_gemini_fallback:
+            raise e
+        px_per_cm = _estimate_px_per_cm_from_gemini(image_bytes)
     mask = _segment_object_mask(img)
 
     ys, xs = np.where(mask > 0)

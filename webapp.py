@@ -310,6 +310,17 @@ HTML = """
           <label>Paso Δz (si remuestreas)</label>
           <input name="step" type="number" step="0.01" value="1.0" />
 
+          <div class="switch-row">
+            <div class="txt">
+              <div class="t">Usar Gemini como fallback</div>
+              <div class="d">Solo si falla la detección local. Requiere `GEMINI_API_KEY` y `GEMINI_ENABLE_CALLS=1`.</div>
+            </div>
+            <label class="switch" aria-label="gemini-fallback">
+              <input type="checkbox" name="gemini_fallback" value="yes" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
           <button class="btn" type="submit">Extraer perfil → Guardar → Calcular</button>
           <div class="hint">Asegúrate que la regla de 30 cm se vea completa y esté en el mismo plano que el objeto.</div>
         </form>
@@ -584,9 +595,10 @@ def create_app() -> Flask:
         method = request.form.get("method", "trapezoidal")
         resample = request.form.get("resample") == "yes"
         step = float(request.form.get("step", "1.0"))
+        allow_gemini_fallback = request.form.get("gemini_fallback") == "yes"
 
         try:
-            pr = profile_from_image_bytes(f.read(), step_cm=step_cm)
+            pr = profile_from_image_bytes(f.read(), step_cm=step_cm, allow_gemini_fallback=allow_gemini_fallback)
         except Exception as e:
             return render_template_string(
                 HTML,
