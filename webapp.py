@@ -473,13 +473,14 @@ HTML = """
           <div class="section-title">Paso 3 · Resultado</div>
           {% if result %}
             <div class="kpi">
-              <div class="k"><div class="l">Volumen estimado</div><div class="v">{{ '%.6f'|format(result.volume) }}</div></div>
+              <div class="k"><div class="l">Volumen estimado (cm³)</div><div class="v">{{ '%.6f'|format(result.volume) }}</div></div>
+              <div class="k"><div class="l">Volumen estimado (L)</div><div class="v">{{ '%.6f'|format(result.volume / 1000.0) }}</div></div>
               <div class="k"><div class="l">Método</div><div class="v">{{ result.method }}</div></div>
               <div class="k"><div class="l">z min</div><div class="v">{{ '%.6f'|format(result.z_min) }}</div></div>
               <div class="k"><div class="l">z max</div><div class="v">{{ '%.6f'|format(result.z_max) }}</div></div>
               <div class="k"><div class="l">n puntos</div><div class="v">{{ result.n }}</div></div>
             </div>
-            <p class="small" style="margin-top:10px;">Unidades: cm³ si `z` está en cm y `A` en cm².</p>
+            <p class="small" style="margin-top:10px;">Unidades: asumimos `z` en cm y `A(z)` en cm² ⇒ volumen en cm³. Conversión: 1 L = 1000 cm³.</p>
             {% if debug_zip_url %}
               <p class="small" style="margin-top:10px;">Debug: <a href="{{ debug_zip_url }}">descargar artefactos (.zip)</a></p>
             {% endif %}
