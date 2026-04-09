@@ -184,13 +184,74 @@ def _segment_object_mask(img_bgr: np.ndarray) -> np.ndarray:
     _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     th_inv = 255 - th
-    c1 = _largest_connected_component(th)
-    c2 = _largest_connected_component(th_inv)
 
-    if int(np.sum(c1)) > int(np.sum(c2)):
-        mask = c1
-    else:
-        mask = c2
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    s = hsv[:, :, 1]
+    s_blur = cv2.GaussianBlur(s, (7, 7), 0)
+    _, ths = cv2.threshold(s_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    ths_inv = 255 - ths
+
+    h, w = th.shape[:2]
+    total = float(th.size)
+
+    def border_contact_frac_component(lbl: np.ndarray, cid: int) -> float:
+        top = int(np.sum(lbl[0, :] == cid))
+        bot = int(np.sum(lbl[h - 1, :] == cid))
+        left = int(np.sum(lbl[:, 0] == cid))
+        right = int(np.sum(lbl[:, w - 1] == cid))
+        return float(top + bot + left + right) / float(2 * w + 2 * h)
+
+    def best_component(binary: np.ndarray) -> tuple[np.ndarray, float] | tuple[None, float]:
+        b = (binary > 0).astype(np.uint8)
+        num, lbl, stats, _ = cv2.connectedComponentsWithStats(b, connectivity=8)
+        if num <= 1:
+            return None, 0.0
+
+        best_score = -1.0
+        best_mask = None
+        for cid in range(1, num):
+            area = float(stats[cid, cv2.CC_STAT_AREA])
+            if area < 1200.0:
+                continue
+            x = float(stats[cid, cv2.CC_STAT_LEFT])
+            y = float(stats[cid, cv2.CC_STAT_TOP])
+            bw = float(stats[cid, cv2.CC_STAT_WIDTH])
+            bh = float(stats[cid, cv2.CC_STAT_HEIGHT])
+            width_frac = bw / float(w)
+            height_frac = bh / float(h)
+            area_frac = area / total
+            bc = border_contact_frac_component(lbl, cid)
+
+            if width_frac >= 0.97 or height_frac >= 0.97:
+                continue
+            if area_frac >= 0.70:
+                continue
+
+            score = area * (1.0 - min(0.95, bc))
+            score *= (1.0 - max(0.0, width_frac - 0.85))
+            if score > best_score:
+                best_score = score
+                best_mask = (lbl == cid).astype(np.uint8)
+
+        if best_mask is None:
+            return None, 0.0
+        return best_mask, float(best_score)
+
+    candidates = [th, th_inv, ths, ths_inv]
+    best = None
+    best_score = -1.0
+    for c in candidates:
+        cm, sc = best_component(c)
+        if cm is None:
+            continue
+        if sc > best_score:
+            best_score = sc
+            best = cm
+
+    if best is None:
+        best = _largest_connected_component(th)
+
+    mask = best
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -242,6 +303,15 @@ def profile_from_mask(mask01: np.ndarray, *, px_per_cm: float, step_cm: float) -
 
     areas = stats[1:, cv2.CC_STAT_AREA]
     main_label = int(np.argmax(areas)) + 1
+
+    bw = float(stats[main_label, cv2.CC_STAT_WIDTH])
+    bh = float(stats[main_label, cv2.CC_STAT_HEIGHT])
+    if bh > 0 and (bw / bh) >= 3.0:
+        raise ValueError(
+            "La silueta detectada es muy horizontal (ancho >> alto). "
+            "Este método asume un sólido de revolución con el eje vertical (z). "
+            "Toma la foto en perfil con el objeto orientado verticalmente (o rota la imagen) y reintenta."
+        )
 
     ys, xs = np.where(labels == main_label)
     if ys.size < 1000:
@@ -333,7 +403,7 @@ def profile_from_image_bytes_with_debug(
         y_r = int(round(0.5 * (float(y1) + float(y2))))
         y_r = int(np.clip(y_r, 0, h - 1))
 
-        thickness = int(max(10, round(0.080 * float(h))))
+        thickness = int(max(12, round(0.120 * float(h))))
         rm = np.zeros((h, w), dtype=np.uint8)
         cv2.line(rm, (int(x1), int(y1)), (int(x2), int(y2)), 1, thickness)
 
@@ -345,9 +415,9 @@ def profile_from_image_bytes_with_debug(
         y_bot = int(min(h, y_r + margin))
 
         top_mask = mask.copy()
-        top_mask[y_bot:, :] = 0
+        top_mask[y_top:, :] = 0
         bot_mask = mask.copy()
-        bot_mask[:y_top, :] = 0
+        bot_mask[:y_bot, :] = 0
 
         def _best_component(m: np.ndarray) -> tuple[np.ndarray, float] | tuple[None, float]:
             m = (m > 0).astype(np.uint8)
