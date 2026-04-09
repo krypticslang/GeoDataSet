@@ -400,10 +400,11 @@ def profile_from_image_bytes_with_debug(
         h, w = mask.shape[:2]
         x1, y1, x2, y2 = ruler_line
 
-        y_r = int(round(0.5 * (float(y1) + float(y2))))
-        y_r = int(np.clip(y_r, 0, h - 1))
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
+        is_horizontal = abs(dx) >= abs(dy)
 
-        thickness = int(max(12, round(0.120 * float(h))))
+        thickness = int(max(12, round(0.120 * float(h if is_horizontal else w))))
         rm = np.zeros((h, w), dtype=np.uint8)
         cv2.line(rm, (int(x1), int(y1)), (int(x2), int(y2)), 1, thickness)
 
@@ -411,13 +412,26 @@ def profile_from_image_bytes_with_debug(
         mask[rm > 0] = 0
 
         margin = int(max(12, round(0.5 * float(thickness))))
-        y_top = int(max(0, y_r - margin))
-        y_bot = int(min(h, y_r + margin))
+        if is_horizontal:
+            y_r = int(round(0.5 * (float(y1) + float(y2))))
+            y_r = int(np.clip(y_r, 0, h - 1))
+            y_top = int(max(0, y_r - margin))
+            y_bot = int(min(h, y_r + margin))
 
-        top_mask = mask.copy()
-        top_mask[y_top:, :] = 0
-        bot_mask = mask.copy()
-        bot_mask[:y_bot, :] = 0
+            a_mask = mask.copy()
+            a_mask[y_top:, :] = 0
+            b_mask = mask.copy()
+            b_mask[:y_bot, :] = 0
+        else:
+            x_r = int(round(0.5 * (float(x1) + float(x2))))
+            x_r = int(np.clip(x_r, 0, w - 1))
+            x_left = int(max(0, x_r - margin))
+            x_right = int(min(w, x_r + margin))
+
+            a_mask = mask.copy()
+            a_mask[:, x_left:] = 0
+            b_mask = mask.copy()
+            b_mask[:, :x_right] = 0
 
         def _best_component(m: np.ndarray) -> tuple[np.ndarray, float] | tuple[None, float]:
             m = (m > 0).astype(np.uint8)
@@ -428,12 +442,13 @@ def profile_from_image_bytes_with_debug(
             best_comp = None
             for cid in range(1, num):
                 area = float(stats[cid, cv2.CC_STAT_AREA])
-                x = float(stats[cid, cv2.CC_STAT_LEFT])
                 bw = float(stats[cid, cv2.CC_STAT_WIDTH])
+                bh = float(stats[cid, cv2.CC_STAT_HEIGHT])
                 if area < 1500.0:
                     continue
                 width_frac = bw / float(w)
-                if width_frac >= 0.90:
+                height_frac = bh / float(h)
+                if width_frac >= 0.90 or height_frac >= 0.90:
                     continue
                 score = area
                 if score > best_score:
@@ -443,18 +458,18 @@ def profile_from_image_bytes_with_debug(
                 return None, 0.0
             return best_comp, float(best_score)
 
-        top_comp, top_score = _best_component(top_mask)
-        bot_comp, bot_score = _best_component(bot_mask)
+        a_comp, a_score = _best_component(a_mask)
+        b_comp, b_score = _best_component(b_mask)
 
-        if top_score >= bot_score and top_comp is not None:
-            mask = top_comp
-        elif bot_comp is not None:
-            mask = bot_comp
+        if a_score >= b_score and a_comp is not None:
+            mask = a_comp
+        elif b_comp is not None:
+            mask = b_comp
         else:
-            if int(np.sum(top_mask)) >= int(np.sum(bot_mask)):
-                mask = top_mask
+            if int(np.sum(a_mask)) >= int(np.sum(b_mask)):
+                mask = a_mask
             else:
-                mask = bot_mask
+                mask = b_mask
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
