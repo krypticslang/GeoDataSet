@@ -450,7 +450,24 @@ def profile_from_image_bytes_with_debug(
                 height_frac = bh / float(h)
                 if width_frac >= 0.90 or height_frac >= 0.90:
                     continue
-                score = area
+
+                # Penaliza componentes pegados al borde (típico del fondo/madera).
+                top = float(np.sum(lbl[0, :] == cid))
+                bot = float(np.sum(lbl[h - 1, :] == cid))
+                left = float(np.sum(lbl[:, 0] == cid))
+                right = float(np.sum(lbl[:, w - 1] == cid))
+                border_contact = (top + bot + left + right) / float(2 * w + 2 * h)
+                if border_contact >= 0.18:
+                    continue
+
+                # Prefiere componentes alejados de la regla (reduce falsos positivos cerca de la madera/regla).
+                x = float(stats[cid, cv2.CC_STAT_LEFT])
+                y = float(stats[cid, cv2.CC_STAT_TOP])
+                cx = x + 0.5 * bw
+                cy = y + 0.5 * bh
+                dist = abs((cy - float(y_r)) if is_horizontal else (cx - float(x_r)))
+
+                score = area * (1.0 + 0.002 * dist)
                 if score > best_score:
                     best_score = score
                     best_comp = (lbl == cid).astype(np.uint8)
