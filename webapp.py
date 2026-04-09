@@ -425,6 +425,21 @@ HTML = """
               </div>
             </div>
 
+            <div class="row" style="margin-top:10px;">
+              <div>
+                <label>Rotación</label>
+                <select name="rotate">
+                  <option value="">sin rotar</option>
+                  <option value="cw">90° derecha</option>
+                  <option value="ccw">90° izquierda</option>
+                </select>
+              </div>
+              <div>
+                <label class="muted">&nbsp;</label>
+                <div class="small muted">Útil si subiste el objeto “acostado”.</div>
+              </div>
+            </div>
+
             <details open>
               <summary>Ajustes</summary>
               <div class="switch-row">
@@ -498,6 +513,7 @@ HTML = """
             <input type="hidden" name="run_id" value="{{ run_id }}" />
             <input type="hidden" name="step_cm" value="{{ step_cm }}" />
             <input type="hidden" name="method" value="{{ method }}" />
+            <input type="hidden" name="rotate" value="{{ rotate }}" />
             <input type="hidden" name="resample" value="{{ 'yes' if resample else '' }}" />
             <input type="hidden" name="step" value="{{ step }}" />
             <input type="hidden" name="gemini_fallback" value="{{ 'yes' if gemini_fallback else '' }}" />
@@ -773,6 +789,7 @@ def create_app() -> Flask:
             run_id=None,
             step_cm=None,
             method=None,
+            rotate=None,
             resample=None,
             step=None,
             gemini_fallback=None,
@@ -824,6 +841,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -846,6 +864,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -869,6 +888,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -892,6 +912,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -924,6 +945,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -957,6 +979,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -977,6 +1000,7 @@ def create_app() -> Flask:
             run_id=None,
             step_cm=None,
             method=None,
+            rotate=None,
             resample=None,
             step=None,
             gemini_fallback=None,
@@ -1006,6 +1030,7 @@ def create_app() -> Flask:
                     run_id=None,
                     step_cm=None,
                     method=None,
+                    rotate=None,
                     resample=None,
                     step=None,
                     gemini_fallback=None,
@@ -1043,6 +1068,7 @@ def create_app() -> Flask:
                     run_id=None,
                     step_cm=None,
                     method=None,
+                    rotate=None,
                     resample=None,
                     step=None,
                     gemini_fallback=None,
@@ -1078,6 +1104,7 @@ def create_app() -> Flask:
                     run_id=None,
                     step_cm=None,
                     method=None,
+                    rotate=None,
                     resample=None,
                     step=None,
                     gemini_fallback=None,
@@ -1097,6 +1124,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -1117,6 +1145,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -1139,6 +1168,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -1152,6 +1182,7 @@ def create_app() -> Flask:
             step_cm = 1.0
 
         method = request.form.get("method", "trapezoidal")
+        rotate = request.form.get("rotate", "")
         resample = request.form.get("resample") == "yes"
         step = float(request.form.get("step", "1.0"))
         allow_gemini_fallback = request.form.get("gemini_fallback") == "yes"
@@ -1172,12 +1203,49 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
                 save_debug=None,
                 view_assets=None,
             )
+
+        if rotate in {"cw", "ccw"}:
+            try:
+                buf = np.frombuffer(image_bytes, dtype=np.uint8)
+                img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+                if img is None:
+                    raise ValueError("No se pudo leer la imagen para rotarla")
+                if rotate == "cw":
+                    img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+                else:
+                    img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                ok, out = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+                if not ok:
+                    raise ValueError("No se pudo re-codificar la imagen rotada")
+                image_bytes = out.tobytes()
+            except Exception as e:
+                return render_template_string(
+                    HTML,
+                    result=None,
+                    rows=None,
+                    y_mode="radius",
+                    message=f"Error al rotar imagen: {e}",
+                    is_error=True,
+                    debug_zip_url=None,
+                    integrand_rows=None,
+                    component_choices=None,
+                    run_id=None,
+                    step_cm=None,
+                    method=None,
+                    rotate=None,
+                    resample=None,
+                    step=None,
+                    gemini_fallback=None,
+                    save_debug=None,
+                    view_assets=None,
+                )
         run_id = uuid.uuid4().hex[:12]
         run_path = debug_dir / run_id
 
@@ -1201,6 +1269,7 @@ def create_app() -> Flask:
                 run_id=None,
                 step_cm=None,
                 method=None,
+                rotate=None,
                 resample=None,
                 step=None,
                 gemini_fallback=None,
@@ -1216,6 +1285,7 @@ def create_app() -> Flask:
                     {
                         "step_cm": float(step_cm),
                         "method": str(method),
+                        "rotate": str(rotate),
                         "resample": bool(resample),
                         "step": float(step),
                         "allow_gemini_fallback": bool(allow_gemini_fallback),
@@ -1273,6 +1343,7 @@ def create_app() -> Flask:
                     run_id=run_id,
                     step_cm=step_cm,
                     method=method,
+                    rotate=rotate,
                     resample=resample,
                     step=step,
                     gemini_fallback=allow_gemini_fallback,
