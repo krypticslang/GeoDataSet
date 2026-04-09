@@ -490,7 +490,76 @@ def profile_from_image_bytes_with_debug(
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = _largest_connected_component(mask)
+
+        def _merge_related_components(m: np.ndarray) -> np.ndarray:
+            m = (m > 0).astype(np.uint8)
+            num, lbl, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+            if num <= 2:
+                return _largest_connected_component(m)
+
+            best_id = 1
+            best_score = -1.0
+            for cid in range(1, num):
+                area = float(stats[cid, cv2.CC_STAT_AREA])
+                bw = float(stats[cid, cv2.CC_STAT_WIDTH])
+                bh = float(stats[cid, cv2.CC_STAT_HEIGHT])
+                score = area * (0.5 + 0.5 * (bh / max(1.0, bw)))
+                if score > best_score:
+                    best_score = score
+                    best_id = cid
+
+            h0, w0 = m.shape[:2]
+            x0 = int(stats[best_id, cv2.CC_STAT_LEFT])
+            y0 = int(stats[best_id, cv2.CC_STAT_TOP])
+            bw0 = int(stats[best_id, cv2.CC_STAT_WIDTH])
+            bh0 = int(stats[best_id, cv2.CC_STAT_HEIGHT])
+            x0r = x0 + bw0
+            y0b = y0 + bh0
+            cx0 = float(x0) + 0.5 * float(bw0)
+
+            merged = (lbl == best_id).astype(np.uint8)
+            gap_thr = int(max(12, round(0.12 * float(h0))))
+
+            for cid in range(1, num):
+                if cid == best_id:
+                    continue
+                area = float(stats[cid, cv2.CC_STAT_AREA])
+                if area < 900.0:
+                    continue
+                x = int(stats[cid, cv2.CC_STAT_LEFT])
+                y = int(stats[cid, cv2.CC_STAT_TOP])
+                bw = int(stats[cid, cv2.CC_STAT_WIDTH])
+                bh = int(stats[cid, cv2.CC_STAT_HEIGHT])
+                xr = x + bw
+                yb = y + bh
+                cx = float(x) + 0.5 * float(bw)
+
+                top = float(np.sum(lbl[0, :] == cid))
+                bot = float(np.sum(lbl[h0 - 1, :] == cid))
+                left = float(np.sum(lbl[:, 0] == cid))
+                right = float(np.sum(lbl[:, w0 - 1] == cid))
+                border_contact = (top + bot + left + right) / float(2 * w0 + 2 * h0)
+                if border_contact >= 0.18:
+                    continue
+
+                inter = max(0, min(x0r, xr) - max(x0, x))
+                minw = max(1, min(bw0, bw))
+                x_overlap = float(inter) / float(minw)
+                y_gap = max(0, max(y0 - yb, y - y0b))
+
+                if x_overlap < 0.25:
+                    continue
+                if y_gap > gap_thr:
+                    continue
+                if abs(cx - cx0) > 0.35 * float(max(bw0, bw)):
+                    continue
+
+                merged[lbl == cid] = 1
+
+            merged = cv2.morphologyEx(merged, cv2.MORPH_CLOSE, kernel, iterations=1)
+            return merged
+
+        mask = _merge_related_components(mask)
     z_cm, r_cm = profile_from_mask(mask, px_per_cm=float(px_per_cm), step_cm=float(step_cm))
 
     overlay = img.copy()
