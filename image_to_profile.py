@@ -237,8 +237,40 @@ def _segment_object_mask(img_bgr: np.ndarray) -> np.ndarray:
             return None, 0.0
         return best_mask, float(best_score)
 
+    def keep_plausible_components(binary: np.ndarray) -> np.ndarray:
+        b = (binary > 0).astype(np.uint8)
+        num, lbl, stats, _ = cv2.connectedComponentsWithStats(b, connectivity=8)
+        if num <= 1:
+            return np.zeros_like(b, dtype=np.uint8)
+
+        out = np.zeros_like(b, dtype=np.uint8)
+        for cid in range(1, num):
+            area = float(stats[cid, cv2.CC_STAT_AREA])
+            if area < 900.0:
+                continue
+            bw = float(stats[cid, cv2.CC_STAT_WIDTH])
+            bh = float(stats[cid, cv2.CC_STAT_HEIGHT])
+            width_frac = bw / float(w)
+            height_frac = bh / float(h)
+            area_frac = area / total
+            bc = border_contact_frac_component(lbl, cid)
+
+            if width_frac >= 0.97 or height_frac >= 0.97:
+                continue
+            if area_frac >= 0.70:
+                continue
+            if bc >= 0.18:
+                continue
+
+            out[lbl == cid] = 1
+
+        if int(np.sum(out)) == 0:
+            return _largest_connected_component(b)
+        return out
+
     candidates = [th, th_inv, ths, ths_inv]
     best = None
+    best_cand = None
     best_score = -1.0
     for c in candidates:
         cm, sc = best_component(c)
@@ -247,11 +279,12 @@ def _segment_object_mask(img_bgr: np.ndarray) -> np.ndarray:
         if sc > best_score:
             best_score = sc
             best = cm
+            best_cand = c
 
-    if best is None:
-        best = _largest_connected_component(th)
+    if best_cand is None:
+        best_cand = th
 
-    mask = best
+    mask = keep_plausible_components(best_cand)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
